@@ -12,15 +12,35 @@ __all__ = ["tsc"]
 
 @metric
 def tsc(adata, *, time_key: str, true_time_key: str):
-    """Temporal Spearman correlation.  Higher is better; range [-1, 1].
+    """Temporal Spearman correlation.
 
-    Rank correlation between the method's inferred per-cell time
-    (``obs[time_key]``) and a real measured time axis (``obs[true_time_key]``)
-    -- collection stage, metabolic labelling duration, FUCCI-derived phase.
+    Rank correlation between the method's inferred per-cell time and a real
+    measured time axis -- collection stage, metabolic labelling duration,
+    FUCCI-derived phase.
 
-    Only meaningful where ``true_time_key`` is an *experimental* observable.
+    Higher is better; range ``[-1, 1]``.
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        Must carry both columns in ``obs``.
+    time_key : str
+        Column holding the method's inferred time.  Absent -> ``not_applicable``.
+    true_time_key : str
+        Column holding the *measured* time axis.  Ordered categorical stages
+        (``"E7.0" < "E7.25" < ...``) are ranked by their category order;
+        anything else is read as numeric.  Absent -> ``not_applicable``.
+
+    Returns
+    -------
+    MetricResult
+        The Spearman rho, or ``not_applicable`` when either column is missing.
+
+    Warnings
+    --------
+    Only meaningful when *true_time_key* is an **experimental** observable.
     Pointing it at a pseudotime computed from the same velocity field makes
-    this circular.
+    the metric circular and it will score near 1 for any method.
     """
     if time_key not in adata.obs:
         raise NotApplicable(f"method infers no obs['{time_key}']")

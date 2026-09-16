@@ -41,21 +41,53 @@ def phase_dir(
     period: float = 2 * np.pi,
     min_neighbors: int = 4,
 ):
-    """FUCCI phase-gradient projection consistency.  Higher is better; [-1, 1].
+    r"""FUCCI phase-gradient projection consistency.
 
     ``obs[phase_key]`` holds each cell's position on the cell cycle, derived
     from the two FUCCI protein reporters -- measured, cyclic, and independent
-    of the RNA the model fits.  For each cell we fit the local gradient of
-    phase over its kNN neighbourhood by least squares in the embedding,
+    of the RNA the model fits.  For each cell the local gradient of phase is
+    fitted over its kNN neighbourhood by least squares in the embedding,
 
-        argmin_g  sum_j ( d_j . g  -  wrap(phi_j - phi_i) )^2 ,   d_j = x_j - x_i
+    .. math::
 
-    and score the cosine between the cell's velocity and that gradient.  The
-    wrap keeps the metric correct across the phase origin, so cells at the
-    G1/M boundary are not scored backwards.
+        g_i = \arg\min_g \sum_j \bigl( d_j \cdot g - \mathrm{wrap}(\varphi_j -
+        \varphi_i) \bigr)^2, \qquad d_j = x_j - x_i
 
-    Pass ``period=1.0`` if your phase is stored on ``[0, 1)`` instead of
-    radians.
+    and the metric is the cosine between the cell's velocity and :math:`g_i`.
+
+    Higher is better; range ``[-1, 1]``.
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        Must carry ``obs[phase_key]``, ``obsm['X_{basis}']``,
+        ``obsm['{vkey}_{basis}']`` and ``uns['neighbors']['indices']``.
+    phase_key : str, default: "fucci_phase"
+        Column holding the FUCCI-derived cell-cycle position.  Absent ->
+        ``not_applicable``.
+    basis : str, default: "umap"
+        Embedding the gradient and the velocity are read in.
+    vkey : str, default: "velocity"
+        Velocity key prefix.
+    period : float, default: ``2 * np.pi``
+        Period of the stored phase.  Pass ``1.0`` if it is on ``[0, 1)``.
+    min_neighbors : int, default: 4
+        Cells with fewer usable neighbours are left ``nan``.
+
+    Returns
+    -------
+    MetricResult
+        ``per_cell`` holds the per-cell cosine, ``nan`` where no gradient could
+        be fitted.  ``not_applicable`` when the dataset has no phase column or
+        no cell had a usable neighbourhood.
+
+    Notes
+    -----
+    The wrap keeps the metric correct across the phase origin, so cells at the
+    G1/M boundary are not scored backwards -- a naive difference would flip
+    their sign.  Because the truth is a protein-level readout, this metric does
+    not share the failure modes of the transcriptome-derived metrics, which is
+    the whole point of including it.
     """
     if phase_key not in adata.obs:
         raise NotApplicable(f"dataset has no cell-cycle phase obs['{phase_key}']")
@@ -92,18 +124,40 @@ def phase_dir(
 
 @metric
 def truth_cos(adata, reference, *, vkey: str = "velocity", ref_vkey: str = "velocity"):
-    """Metabolic-labelling ground-truth cosine.  Higher is better; [-1, 1].
+    """Metabolic-labelling ground-truth cosine.
 
     On tscRNA-seq data, hide the labelling channel and let a splicing-based
     method see only spliced/unspliced; then score its velocity against the
     velocity derived from the labelling, cell by cell, on shared genes.
 
-    *reference* is the AnnData carrying the labelling-derived velocity.  Both
-    must be gene-space: a method whose velocity lives in a learned latent space
-    has no gene-wise correspondence to the reference, and a cosine between the
-    two spaces is meaningless.  Those methods return ``not_applicable`` here --
-    scoring them needs a space-free measure (distance correlation on the two
-    neighbourhood geometries), which is deliberately not implemented yet.
+    Higher is better; range ``[-1, 1]``.
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        The method's run.  Its velocity space must be ``"gene"``.
+    reference : anndata.AnnData
+        Run carrying the labelling-derived velocity, on the **same cells in
+        the same order**.
+    vkey : str, default: "velocity"
+        Velocity layer key in *adata*.
+    ref_vkey : str, default: "velocity"
+        Velocity layer key in *reference*.
+
+    Returns
+    -------
+    MetricResult
+        ``per_cell`` holds the per-cell cosine.  ``not_applicable`` when the
+        velocity is not gene-space, the cell counts differ, or fewer than 10
+        genes are shared and valid in both runs.
+
+    Notes
+    -----
+    A method whose velocity lives in a learned latent space has no gene-wise
+    correspondence to the reference, so the cosine would be meaningless;
+    those return ``not_applicable`` rather than a number.  Scoring them needs a
+    space-free measure -- distance correlation between the two neighbourhood
+    geometries -- which is deliberately not implemented yet.
     """
     if velocity_space(adata) != "gene":
         raise NotApplicable(
@@ -142,12 +196,36 @@ def gamma_corr(
     gamma_key: str = "fit_gamma",
     ref_gamma_key: str = "fit_gamma",
 ):
-    """Gene-level degradation-rate correlation.  Higher is better; [-1, 1].
+    """Gene-level degradation-rate correlation.
 
     Spearman correlation between the degradation rates a splicing method infers
-    and those measured from metabolic labelling.  Only methods that expose an
-    explicit per-gene gamma qualify; rate-free models (autoencoders) and models
-    with no splicing rate concept do not.
+    and those measured from metabolic labelling.
+
+    Higher is better; range ``[-1, 1]``.
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        The method's run; must expose ``var[gamma_key]``.
+    reference : anndata.AnnData
+        Run carrying labelling-derived rates in ``var[ref_gamma_key]``.
+    gamma_key : str, default: "fit_gamma"
+        Per-gene degradation rate in *adata*.
+    ref_gamma_key : str, default: "fit_gamma"
+        Per-gene degradation rate in *reference*.
+
+    Returns
+    -------
+    MetricResult
+        ``not_applicable`` when either side exposes no per-gene rate or fewer
+        than 10 genes are shared.
+
+    Notes
+    -----
+    Only methods with an explicit rate parameter qualify.  Rate-free models
+    (autoencoders regressing velocity directly) and models with no splicing
+    rate concept are ``not_applicable`` by construction -- see the
+    ``速率假设`` / rate-assumption column of the methods table.
     """
     if gamma_key not in adata.var:
         raise NotApplicable(f"method exposes no per-gene rate var['{gamma_key}']")

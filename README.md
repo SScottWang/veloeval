@@ -2,6 +2,9 @@
 
 Metrics for benchmarking RNA velocity methods.
 
+**Docs: <https://veloeval.readthedocs.io>** — generated from the docstrings, so
+it is never out of date with the code.
+
 `veloeval` evaluates. It does not run velocity methods and it does not own a
 workflow — those live in the VeloBench pipeline. The split is the same one
 `scib` and `scib-pipeline` use, and for the same reason: the pipeline changes
@@ -127,6 +130,17 @@ never instead of them.
 pip install -e ".[dev]"
 pytest
 ```
+
+## Docs
+
+```bash
+pip install -e ".[docs]"
+sphinx-build -b html docs docs/_build/html
+```
+
+The site is generated from the docstrings — adding a metric means writing its
+docstring and listing it in `docs/api.md`, not writing a second copy of the
+explanation. readthedocs rebuilds on every push.
 
 Every metric is checked on a field whose answer is known analytically: a perfect
 field must score 1, its reverse −1, an unstructured one ≈0, and the score must

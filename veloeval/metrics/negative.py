@@ -36,11 +36,30 @@ def _rows(T):
 
 @metric
 def sts(adata, *, tkey: str = "T_fwd"):
-    """Self-transition score.  Higher is better; range [0, 1].
+    """Self-transition score.
 
-    Mean probability that a cell transitions to itself.  A cell that is not
-    moving should mostly stay put, so on a negative control a high STS is the
-    correct answer.
+    Mean probability that a cell transitions to itself.
+
+    Higher is better; range ``[0, 1]``.
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        Must carry a row-stochastic transition matrix in ``obsp[tkey]``.
+    tkey : str, default: "T_fwd"
+        Key of the transition matrix in ``adata.obsp``.
+
+    Returns
+    -------
+    MetricResult
+        ``per_cell`` holds each cell's self-transition probability.
+
+    Notes
+    -----
+    Interpret on a **negative control** -- a population with no ongoing
+    differentiation.  A cell that is not moving should mostly stay put, so a
+    high score there is the correct answer, and a low one means the method
+    invented movement.
     """
     T = get_transition_matrix(adata, tkey)
     diag = T.diagonal() if hasattr(T, "diagonal") else np.diag(np.asarray(T))
@@ -50,13 +69,31 @@ def sts(adata, *, tkey: str = "T_fwd"):
 
 @metric
 def ees(adata, *, tkey: str = "T_fwd"):
-    """Effective entropy score.  Higher is better; range [0, 1].
+    """Effective entropy score.
 
     Shannon entropy of each cell's transition distribution, normalised by the
     entropy of a uniform distribution over that cell's candidate transitions.
-    1.0 means "no opinion about where this cell goes next", which on a negative
-    control is the honest answer; a low score there means the method invented a
-    trajectory.
+
+    Higher is better; range ``[0, 1]``.
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        Must carry a row-stochastic transition matrix in ``obsp[tkey]``.
+    tkey : str, default: "T_fwd"
+        Key of the transition matrix in ``adata.obsp``.
+
+    Returns
+    -------
+    MetricResult
+        ``per_cell`` holds each cell's normalised entropy; rows with fewer than
+        two candidate targets are ``nan``.
+
+    Notes
+    -----
+    1.0 means "no opinion about where this cell goes next".  On a negative
+    control that is the honest answer; a low score there means the method
+    produced a confident but fabricated trajectory.
     """
     T = get_transition_matrix(adata, tkey)
 
@@ -77,15 +114,41 @@ def ees(adata, *, tkey: str = "T_fwd"):
 
 @metric
 def mag_ratio(adata_negative, adata_positive, *, vkey: str = "velocity"):
-    """Relative velocity magnitude ratio.  Closer to 0 is better.
+    """Relative velocity magnitude ratio.
 
     Mean ``||v||`` on a negative control divided by mean ``||v||`` on a
-    positive control, for the *same method*.  A method that genuinely detects
-    steady state shrinks its arrows when there is nothing to detect; one that
-    always emits unit-ish vectors gives a ratio near 1.
+    positive control, for the *same method*.
 
-    Both runs must come from the same method with the same preprocessing --
-    otherwise this compares the two datasets, not the method.
+    Closer to 0 is better; unbounded above.
+
+    Parameters
+    ----------
+    adata_negative : anndata.AnnData
+        Run on the negative control (e.g. the pancreas terminal-state subset).
+    adata_positive : anndata.AnnData
+        Run on the paired positive control (e.g. the full pancreas dataset).
+    vkey : str, default: "velocity"
+        Velocity layer key, used in both runs.
+
+    Returns
+    -------
+    MetricResult
+        The ratio, or ``not_applicable`` when the positive control has zero
+        mean magnitude.
+
+    Warnings
+    --------
+    Both runs must come from the **same method** with the **same
+    preprocessing**, differing only in the dataset.  Otherwise this compares
+    two datasets rather than measuring the method.
+
+    Notes
+    -----
+    A method that genuinely detects steady state shrinks its arrows when there
+    is nothing to detect; one that always emits unit-ish vectors gives a ratio
+    near 1 whatever it is shown.  This is a two-run metric, so
+    :func:`~veloeval.compute_all` does not include it -- call it from the
+    pipeline, which knows how the control pairs are matched.
     """
     v_neg = get_velocity(adata_negative, vkey)
     v_pos = get_velocity(adata_positive, vkey)

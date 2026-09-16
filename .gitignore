@@ -7,5 +7,7 @@ dist/
 .ruff_cache/
 .venv/
 venv/
+docs/_build/
+docs/generated/
 .DS_Store
 *.h5ad

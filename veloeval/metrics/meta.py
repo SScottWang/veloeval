@@ -46,6 +46,17 @@ def rho_rank(
     conventional_higher_better, ground_truth_higher_better
         Set ``False`` for a metric where lower is better, so both sides are
         ranked in the same direction before correlating.
+    method_key : str, default: "method"
+        Column identifying the method.
+    min_methods : int, default: 5
+        Below this many methods with both metrics present, the correlation is
+        not worth reporting and the result is ``not_applicable``.
+
+    Returns
+    -------
+    MetricResult
+        The Spearman rho between the two rankings; higher means the
+        conventional metric tracks the physical truth.
 
     Notes
     -----
