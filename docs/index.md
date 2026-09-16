@@ -12,7 +12,7 @@ definition should.
 :hidden:
 
 tutorial
-api
+api/index
 ```
 
 ## Install

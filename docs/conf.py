@@ -52,7 +52,7 @@ html_title = "veloeval"
 html_static_path = []
 html_theme_options = {
     "collapse_navigation": False,
-    "navigation_depth": 3,
+    "navigation_depth": 4,
     "style_external_links": True,
 }
 

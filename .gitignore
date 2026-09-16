@@ -9,5 +9,6 @@ dist/
 venv/
 docs/_build/
 docs/generated/
+docs/api/generated/
 .DS_Store
 *.h5ad
