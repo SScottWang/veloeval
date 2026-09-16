@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "veloeval"
-version = "0.1.0"
+version = "0.0.1"
 description = "Metrics for benchmarking RNA velocity methods"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -32,8 +32,8 @@ prepare = ["scvelo>=0.2.5"]
 plot = ["matplotlib>=3.5"]
 dev = ["pytest>=7", "ruff>=0.4"]
 docs = [
-    "sphinx>=7",
-    "furo>=2024.1",
+    "sphinx>=7,<9",
+    "sphinx-rtd-theme>=2.0",
     "myst-parser>=2",
 ]
 

@@ -1,24 +1,18 @@
 """Metric functions, grouped the way the benchmark groups them.
 
-Single-run metrics take an ``AnnData`` and return a
-:class:`~veloeval.result.MetricResult`.  Two metrics do not fit that shape and
-say so in their signatures:
-
-* :func:`~veloeval.metrics.negative.mag_ratio` takes two runs of one method
-  (negative control, positive control);
-* :func:`~veloeval.metrics.meta.rho_rank` takes an assembled results table.
+Each takes an ``AnnData`` and returns a :class:`~veloeval.MetricResult`.  The
+two that need a labelling reference (:func:`truth_cos`, :func:`gamma_corr`)
+take a second ``AnnData``; everything else is one run in, one result out.
 """
 
 from .coherence import icvcoh, velocity_consistency
 from .direction import cbdir, cbvcoh, cto
 from .groundtruth import gamma_corr, phase_dir, truth_cos
-from .meta import rho_rank
-from .negative import ees, mag_ratio, sts
+from .negative import ees, sts
 from .temporal import tsc
 
-#: Metric name -> ``"higher"`` / ``"lower"`` / ``"zero"``, for ranking and
-#: for colour scales in the plotting layer.  Keep in sync with the framework's
-#: metrics table.
+#: Metric name -> ``"higher"`` / ``"lower"`` / ``"zero"``.  What "better" means
+#: for each metric, for ranking and for colour scales in a plotting layer.
 DIRECTION = {
     "cbdir": "higher",
     "cbvcoh": "higher",
@@ -28,11 +22,9 @@ DIRECTION = {
     "tsc": "higher",
     "sts": "higher",
     "ees": "higher",
-    "mag_ratio": "zero",
     "phase_dir": "higher",
     "truth_cos": "higher",
     "gamma_corr": "higher",
-    "rho_rank": "higher",
 }
 
 __all__ = [
@@ -44,10 +36,8 @@ __all__ = [
     "tsc",
     "sts",
     "ees",
-    "mag_ratio",
     "phase_dir",
     "truth_cos",
     "gamma_corr",
-    "rho_rank",
     "DIRECTION",
 ]

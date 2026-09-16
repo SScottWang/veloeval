@@ -1,44 +1,47 @@
 """veloeval -- metrics for benchmarking RNA velocity methods.
 
-The library evaluates; it does not run velocity methods and does not own a
-workflow.  That split is deliberate: the pipeline changes often, the metric
-definitions should not, and only one of the two belongs in a paper's methods
-section.
+The library implements metrics and nothing else.  It does not run velocity
+methods, does not own a workflow, and does not orchestrate a run: assembling
+rows, aggregating seeds and recording runtimes belong to the pipeline, which
+changes far more often than a metric definition should.
 
-Typical use, per (method, dataset, seed)::
+Each metric takes an ``AnnData`` and returns a :class:`~veloeval.MetricResult`
+carrying a status, so "not applicable to this dataset", "upstream field
+missing" and "crashed" stay distinguishable all the way into the results
+table::
 
     import anndata as ad
-    import veloeval as ve
+    from veloeval.metrics import cbdir, icvcoh, velocity_consistency
 
-    adata = ad.read_h5ad("velocity.h5ad")
-    results = ve.compute_all(
+    adata = ad.read_h5ad("2.velocity/pancreas/scvelo_dynamical/seed_42/velocity.h5ad")
+
+    r = cbdir(
         adata,
         label_key="clusters",
-        cluster_edges=[["Ductal", "Ngn3 low EP"], ...],
+        cluster_edges=[["Ductal", "Ngn3 low EP"], ["Ngn3 low EP", "Ngn3 high EP"]],
     )
-    row = ve.to_row(results, method="scvelo_dynamical", dataset="pancreas", seed=42)
+    r.status    # "ok" | "not_applicable" | "missing_input" | "failed"
+    r.value     # 0.43
+    r.per_cell  # array, nan where the cell could not be scored
 
-Every metric returns a :class:`~veloeval.result.MetricResult` carrying a status,
-so "not applicable to this dataset", "upstream field missing" and "crashed"
-stay distinguishable all the way into the results table.
+Record :data:`__version__` alongside the numbers.  Without it a table computed
+before a metric was fixed is indistinguishable from one computed after.
 """
 
 from .access import set_velocity_space, velocity_space
 from .metrics import DIRECTION
 from .prepare import prepare
-from .result import MetricResult, Status
-from .runner import compute_all, coverage_summary, to_row
+from .result import MetricResult, MissingInput, NotApplicable, Status
 
-__version__ = "0.1.0"
+__version__ = "0.0.1"
 
 __all__ = [
-    "compute_all",
-    "to_row",
-    "coverage_summary",
-    "prepare",
     "MetricResult",
     "Status",
+    "MissingInput",
+    "NotApplicable",
     "DIRECTION",
+    "prepare",
     "set_velocity_space",
     "velocity_space",
     "__version__",

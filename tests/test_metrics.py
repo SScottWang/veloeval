@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 import pytest
 
 import veloeval as ve
 from veloeval import metrics as M
-
-from .conftest import make_adata
 
 
 # --------------------------------------------------------------------------
@@ -63,8 +60,7 @@ def test_icvcoh_aligned_vs_random(linear, rng):
     assert M.icvcoh(linear, label_key="clusters").value == pytest.approx(1.0, abs=1e-6)
 
     noisy = linear.copy()
-    V = rng.normal(size=(noisy.n_obs, 2))
-    noisy.layers["velocity"] = V
+    noisy.layers["velocity"] = rng.normal(size=(noisy.n_obs, 2))
     assert abs(M.icvcoh(noisy, label_key="clusters").value) < 0.4
 
 
@@ -91,9 +87,8 @@ def test_phase_dir_forward_and_backward(cycle):
 def test_phase_dir_handles_the_wraparound(cycle):
     """Cells straddling phase 0 must not be scored backwards."""
     per_cell = M.phase_dir(cycle).per_cell
-    near_origin = (cycle.obs["fucci_phase"].to_numpy() < 0.2) | (
-        cycle.obs["fucci_phase"].to_numpy() > 2 * np.pi - 0.2
-    )
+    phi = cycle.obs["fucci_phase"].to_numpy()
+    near_origin = (phi < 0.2) | (phi > 2 * np.pi - 0.2)
     assert np.nanmean(per_cell[near_origin]) == pytest.approx(1.0, abs=0.05)
 
 
@@ -187,34 +182,6 @@ def test_sts_and_ees_on_known_matrices(linear):
     assert M.ees(confident).value < 0.2
 
 
-def test_mag_ratio(linear):
-    pos = linear.copy()
-    neg = linear.copy()
-    neg.layers["velocity"] = neg.layers["velocity"] * 0.01
-    assert M.mag_ratio(neg, pos).value == pytest.approx(0.01, abs=1e-9)
-
-
-# --------------------------------------------------------------------------
-# Meta
-# --------------------------------------------------------------------------
-
-def test_rho_rank():
-    df = pd.DataFrame(
-        {
-            "method": list("abcdef"),
-            "cbdir": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
-            "phase_dir": [0.6, 0.5, 0.4, 0.3, 0.2, 0.1],
-        }
-    )
-    res = M.rho_rank(df, conventional="cbdir", ground_truth="phase_dir")
-    assert res.value == pytest.approx(-1.0, abs=1e-9)
-
-    small = df.head(3)
-    assert M.rho_rank(small, conventional="cbdir", ground_truth="phase_dir").status == (
-        "not_applicable"
-    )
-
-
 # --------------------------------------------------------------------------
 # Status semantics -- the reason this library exists
 # --------------------------------------------------------------------------
@@ -245,25 +212,33 @@ def test_not_applicable_without_labels(linear):
     assert M.icvcoh(linear, label_key=None).status == "not_applicable"
 
 
-def test_compute_all_and_to_row(linear, edges):
-    linear.obs["latent_time"] = np.linspace(0, 1, linear.n_obs)
-    results = ve.compute_all(linear, label_key="clusters", cluster_edges=edges)
-    row = ve.to_row(results, method="demo", dataset="linear", seed=42)
-
-    assert row["method"] == "demo"
-    assert row["veloeval_version"] == ve.__version__
-    assert row["cbdir"] == pytest.approx(1.0, abs=1e-6)
-    assert row["cbdir_status"] == "ok"
-    # no FUCCI, no transition matrix, no labelling reference on this fixture
-    assert row["phase_dir_status"] == "not_applicable"
-    assert row["sts_status"] == "missing_input"
-    assert row["truth_cos_status"] == "not_applicable"
-
-
-def test_no_metric_ever_raises(linear):
-    """An empty AnnData must produce statuses, not a traceback."""
-    empty = make_adata(np.zeros((3, 2)), np.zeros((3, 2)))
+def test_no_metric_ever_raises(gene_space):
+    """A stripped AnnData must produce statuses, not a traceback."""
+    empty = gene_space.copy()
     del empty.layers["velocity"]
     del empty.obsm["velocity_umap"]
-    results = ve.compute_all(empty)
-    assert all(r.status != "ok" for r in results.values())
+
+    calls = [
+        lambda a: M.cbdir(a, label_key="clusters", cluster_edges=[["A", "B"]]),
+        lambda a: M.cbvcoh(a, label_key="clusters", cluster_edges=[["A", "B"]]),
+        lambda a: M.cto(a, label_key="clusters", cluster_edges=[["A", "B"]]),
+        lambda a: M.icvcoh(a, label_key="clusters"),
+        lambda a: M.velocity_consistency(a),
+        lambda a: M.tsc(a, time_key="latent_time", true_time_key="stage"),
+        lambda a: M.sts(a),
+        lambda a: M.ees(a),
+        lambda a: M.phase_dir(a),
+        lambda a: M.truth_cos(a, gene_space),
+        lambda a: M.gamma_corr(a, gene_space),
+    ]
+    for call in calls:
+        assert call(empty).status != "ok"
+
+
+def test_direction_covers_every_exported_metric():
+    exported = {n for n in M.__all__ if n != "DIRECTION"}
+    assert exported == set(M.DIRECTION)
+
+
+def test_version_is_importable():
+    assert ve.__version__ == "0.0.1"

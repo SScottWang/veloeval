@@ -10,7 +10,6 @@ project = "veloeval"
 copyright = "2026, VeloBench contributors"
 author = "VeloBench contributors"
 release = _version("veloeval")
-version = ".".join(release.split(".")[:2])
 
 extensions = [
     "sphinx.ext.autodoc",        # pull docstrings out of the code
@@ -20,6 +19,7 @@ extensions = [
     "sphinx.ext.viewcode",       # "[source]" link next to every function
     "sphinx.ext.mathjax",        # the formula in phase_dir
     "myst_parser",               # pages in Markdown, not reStructuredText
+    "sphinx_rtd_theme",
 ]
 
 autosummary_generate = True
@@ -47,8 +47,13 @@ myst_enable_extensions = ["deflist", "colon_fence", "dollarmath"]
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
-html_theme = "furo"
-html_title = f"veloeval {version}"
+html_theme = "sphinx_rtd_theme"
+html_title = "veloeval"
 html_static_path = []
+html_theme_options = {
+    "collapse_navigation": False,
+    "navigation_depth": 3,
+    "style_external_links": True,
+}
 
 nitpick_ignore_regex = [("py:class", r".*")]

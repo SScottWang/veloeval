@@ -1,28 +1,27 @@
 """Negative controls: does the method stay quiet where nothing is happening?
 
 On a population with no ongoing differentiation, a trustworthy method should
-produce a diffuse, low-magnitude field.  A confident, coherent field there is a
+produce a diffuse, low-confidence field.  A confident one there is a
 hallucination -- and the conventional accuracy metrics cannot see it, because
 they only ever ask "is the arrow pointing the right way" on data where there is
 a right way.
 
-:func:`sts` and :func:`ees` read a transition matrix and are single-run.
-:func:`mag_ratio` compares two runs of the *same method* on a negative- and a
-positive-control dataset, so it takes two AnnData objects.
+Both metrics here read a transition matrix from ``adata.obsp``.  It is not
+computed for you; see :func:`veloeval.prepare`.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-from ..access import get_transition_matrix, get_velocity
+from ..access import get_transition_matrix
 from ..result import NotApplicable, metric
 
-__all__ = ["sts", "ees", "mag_ratio"]
+__all__ = ["sts", "ees"]
 
 
 def _rows(T):
-    """Iterate over ``(row_values,)`` of a dense or sparse transition matrix."""
+    """Iterate over the non-zero values of each row of a dense or sparse matrix."""
     if hasattr(T, "tocsr"):
         T = T.tocsr()
         for i in range(T.shape[0]):
@@ -110,52 +109,3 @@ def ees(adata, *, tkey: str = "T_fwd"):
     if np.all(np.isnan(per_cell)):
         raise NotApplicable("transition matrix has no multi-target rows")
     return float(np.nanmean(per_cell)), per_cell
-
-
-@metric
-def mag_ratio(adata_negative, adata_positive, *, vkey: str = "velocity"):
-    """Relative velocity magnitude ratio.
-
-    Mean ``||v||`` on a negative control divided by mean ``||v||`` on a
-    positive control, for the *same method*.
-
-    Closer to 0 is better; unbounded above.
-
-    Parameters
-    ----------
-    adata_negative : anndata.AnnData
-        Run on the negative control (e.g. the pancreas terminal-state subset).
-    adata_positive : anndata.AnnData
-        Run on the paired positive control (e.g. the full pancreas dataset).
-    vkey : str, default: "velocity"
-        Velocity layer key, used in both runs.
-
-    Returns
-    -------
-    MetricResult
-        The ratio, or ``not_applicable`` when the positive control has zero
-        mean magnitude.
-
-    Warnings
-    --------
-    Both runs must come from the **same method** with the **same
-    preprocessing**, differing only in the dataset.  Otherwise this compares
-    two datasets rather than measuring the method.
-
-    Notes
-    -----
-    A method that genuinely detects steady state shrinks its arrows when there
-    is nothing to detect; one that always emits unit-ish vectors gives a ratio
-    near 1 whatever it is shown.  This is a two-run metric, so
-    :func:`~veloeval.compute_all` does not include it -- call it from the
-    pipeline, which knows how the control pairs are matched.
-    """
-    v_neg = get_velocity(adata_negative, vkey)
-    v_pos = get_velocity(adata_positive, vkey)
-
-    denom = float(np.nanmean(np.linalg.norm(v_pos, axis=1)))
-    if not np.isfinite(denom) or denom == 0:
-        raise NotApplicable("positive control has zero mean velocity magnitude")
-
-    numer = float(np.nanmean(np.linalg.norm(v_neg, axis=1)))
-    return numer / denom

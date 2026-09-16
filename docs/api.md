@@ -3,19 +3,6 @@
 Everything below is generated from the docstrings in the source. Change a
 docstring, push, and this page changes with it.
 
-## Running the metrics
-
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   veloeval.compute_all
-   veloeval.to_row
-   veloeval.coverage_summary
-   veloeval.prepare
-```
-
 ## Direction correctness
 
 Needs curated `cluster_edges`.
@@ -60,7 +47,6 @@ Needs curated `cluster_edges`.
 
    veloeval.metrics.sts
    veloeval.metrics.ees
-   veloeval.metrics.mag_ratio
 ```
 
 ## Independent ground truth
@@ -75,16 +61,6 @@ Needs curated `cluster_edges`.
    veloeval.metrics.gamma_corr
 ```
 
-## Meta
-
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   veloeval.metrics.rho_rank
-```
-
 ## Result type
 
 ```{eval-rst}
@@ -96,6 +72,26 @@ Needs curated `cluster_edges`.
 ```{eval-rst}
 .. automodule:: veloeval.result
    :members: metric, MissingInput, NotApplicable
+```
+
+## Preparing an h5ad
+
+The metrics never derive a velocity graph, a kNN or a transition matrix on the
+fly: doing so would give the methods whose wrappers already built one their own
+parameters and the rest defaults, and nothing in the results would record
+which. Call this once at the end of each method wrapper instead.
+
+```{eval-rst}
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   veloeval.prepare
+```
+
+```{eval-rst}
+.. automodule:: veloeval.prepare
+   :members: project_velocity, build_neighbor_indices
 ```
 
 ## Accessors
