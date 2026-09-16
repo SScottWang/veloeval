@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "veloeval"
+version = "0.1.0"
+description = "Metrics for benchmarking RNA velocity methods"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "VeloBench contributors" }]
+keywords = ["rna-velocity", "single-cell", "benchmark", "metrics"]
+classifiers = [
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Programming Language :: Python :: 3",
+]
+
+# Deliberately light: this package reads an AnnData and returns numbers.
+# scvelo is only needed by veloeval.prepare, which runs in the pipeline.
+dependencies = [
+    "numpy>=1.21",
+    "pandas>=1.3",
+    "scipy>=1.7",
+    "anndata>=0.8",
+    "scikit-learn>=1.0",
+]
+
+[project.optional-dependencies]
+prepare = ["scvelo>=0.2.5"]
+plot = ["matplotlib>=3.5"]
+dev = ["pytest>=7", "ruff>=0.4"]
+
+[project.urls]
+Homepage = "https://github.com/wsg/veloeval"
+
+[tool.hatch.build.targets.wheel]
+packages = ["veloeval"]
+
+[tool.ruff]
+line-length = 90
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
