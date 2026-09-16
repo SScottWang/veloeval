@@ -35,11 +35,10 @@ docs = [
     "sphinx>=7",
     "furo>=2024.1",
     "myst-parser>=2",
-    "sphinx-autodoc-typehints>=1.25",
 ]
 
 [project.urls]
-Homepage = "https://github.com/wsg/veloeval"
+Homepage = "https://github.com/SScottWang/veloeval"
 
 [tool.hatch.build.targets.wheel]
 packages = ["veloeval"]

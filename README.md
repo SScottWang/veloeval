@@ -12,7 +12,7 @@ weekly, the metric definitions should not, and only one of the two belongs in a
 paper's methods section.
 
 ```bash
-pip install git+https://github.com/<org>/veloeval.git@v0.1.0
+pip install git+https://github.com/SScottWang/veloeval.git@v0.1.0
 ```
 
 ## Use

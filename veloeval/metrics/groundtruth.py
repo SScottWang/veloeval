@@ -225,7 +225,7 @@ def gamma_corr(
     Only methods with an explicit rate parameter qualify.  Rate-free models
     (autoencoders regressing velocity directly) and models with no splicing
     rate concept are ``not_applicable`` by construction -- see the
-    ``速率假设`` / rate-assumption column of the methods table.
+    rate-assumption column of the methods table.
     """
     if gamma_key not in adata.var:
         raise NotApplicable(f"method exposes no per-gene rate var['{gamma_key}']")

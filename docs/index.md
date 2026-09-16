@@ -20,7 +20,7 @@ api
 ## Install
 
 ```bash
-pip install git+https://github.com/<org>/veloeval.git@v0.1.0
+pip install git+https://github.com/SScottWang/veloeval.git@v0.1.0
 ```
 
 Pin a tag rather than tracking `main`. Every results row carries
