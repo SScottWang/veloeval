@@ -5,20 +5,29 @@ these pages change with it.
 
 ```{toctree}
 :maxdepth: 2
+:caption: Metrics
 
 direction
 coherence
 temporal
 negative
 groundtruth
-helpers
+```
+
+```{toctree}
+:maxdepth: 2
+:caption: Supporting
+
+result
+prepare
+access
 ```
 
 Every metric takes an `AnnData` and returns a
-{class}`~veloeval.MetricResult` — a value plus a status saying why the value is
-(or is not) there. Two of them, {func}`~veloeval.metrics.truth_cos` and
-{func}`~veloeval.metrics.gamma_corr`, take a second `AnnData` carrying the
-labelling-derived reference.
+{class}`~veloeval.result.MetricResult` — a value plus a status saying why the
+value is (or is not) there. Two of them,
+{func}`~veloeval.metrics.truth_cos` and {func}`~veloeval.metrics.gamma_corr`,
+take a second `AnnData` carrying the labelling-derived reference.
 
 | status | meaning |
 | --- | --- |

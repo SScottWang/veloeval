@@ -5,7 +5,7 @@ End to end, the way the pipeline uses it.
 ## In the method wrapper
 
 At the end of Module 2, once the method has written its velocity, call
-{func}`~veloeval.prepare`. It gives every method the same kNN, the same
+{func}`~veloeval.prepare.prepare`. It gives every method the same kNN, the same
 embedding projection and the same transition matrix, and records the parameters
 it used in `adata.uns["veloeval"]["prepared"]`.
 
@@ -160,7 +160,8 @@ exception into the matching status, so the body never needs a `try`.
 
 The docstring **is** the documentation — this site is generated from it, so
 there is nothing else to update. Add the metric to `DIRECTION` in
-`veloeval/metrics/__init__.py` and to `docs/api.md`.
+`veloeval/metrics/__init__.py` and to its category page under
+`docs/api/`.
 
 Then the test, on an input whose answer you can write down:
 

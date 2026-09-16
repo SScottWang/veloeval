@@ -65,7 +65,7 @@ never instead of them.
 
 ## Every result carries a status
 
-A metric returns a {class}`~veloeval.MetricResult`, never a bare float, because
+A metric returns a {class}`~veloeval.result.MetricResult`, never a bare float, because
 an absent value has to say why it is absent:
 
 | status | meaning |

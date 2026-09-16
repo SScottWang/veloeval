@@ -12,7 +12,7 @@ control — a terminal-state subset, a population of differentiated cells —
 ideally against the same method's score on a paired positive control.
 
 Both read a row-stochastic transition matrix from `adata.obsp`. It is not
-computed for you; see {func}`~veloeval.prepare`.
+computed for you; see {func}`~veloeval.prepare.prepare`.
 
 ```{eval-rst}
 .. autosummary::
