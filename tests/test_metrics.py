@@ -535,23 +535,121 @@ def test_build_neighbor_indices_accepts_a_latent_space(blobs):
 # Negative controls
 # --------------------------------------------------------------------------
 
-def test_sts_and_ees_on_known_matrices(linear):
+def _with_confidence(adata, conf):
+    """A velocity graph whose row maxima are *conf* (each cell -> next cell)."""
+    from scipy.sparse import csr_matrix
+
+    n = adata.n_obs
+    a = adata.copy()
+    a.uns["velocity_graph"] = csr_matrix(
+        (conf, (np.arange(n), (np.arange(n) + 1) % n)), shape=(n, n)
+    )
+    return a
+
+
+def test_sts_is_scvelos_self_transition(linear, rng):
+    conf = rng.uniform(0, 0.9, linear.n_obs)
+    r = M.sts(_with_confidence(linear, conf))
+    expect = np.clip(np.percentile(conf, 98) - conf, 0, 1)
+    assert r.per_cell == pytest.approx(expect)
+    assert r.value == pytest.approx(expect.mean())
+
+
+def test_sts_abs_sees_a_uniform_shift_that_sts_does_not(linear, rng):
+    noise = rng.normal(0, 0.03, linear.n_obs)
+    quiet = _with_confidence(linear, np.clip(0.1 + noise, 0, 1))
+    loud = _with_confidence(linear, np.clip(0.8 + noise, 0, 1))
+    assert M.sts(quiet).value == pytest.approx(M.sts(loud).value, abs=1e-3)
+    assert M.sts_abs(quiet).value == pytest.approx(0.9, abs=0.01)
+    assert M.sts_abs(loud).value == pytest.approx(0.2, abs=0.01)
+
+
+def test_sts_scores_only_the_chosen_groups(linear, rng):
+    conf = rng.uniform(0, 0.9, linear.n_obs)
+    a = _with_confidence(linear, conf)
+    labels = a.obs["clusters"].to_numpy().astype(str)
+    everyone = np.clip(np.percentile(conf, 98) - conf, 0, 1)
+
+    one = M.sts(a, label_key="clusters", groups="B")
+    assert one.value == pytest.approx(everyone[labels == "B"].mean())
+    assert np.isnan(one.per_cell[labels != "B"]).all()
+
+    two = M.sts(a, label_key="clusters", groups=["A", "B"])
+    assert two.value == pytest.approx(everyone[np.isin(labels, ["A", "B"])].mean())
+
+    own = M.sts(a, label_key="clusters", groups="B", reference="groups")
+    c = conf[labels == "B"]
+    assert own.value == pytest.approx(np.clip(np.percentile(c, 98) - c, 0, 1).mean())
+
+    absolute = M.sts_abs(a, label_key="clusters", groups=["B"])
+    assert absolute.value == pytest.approx(1 - c.mean())
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        dict(groups="B"),
+        dict(label_key="clusters", groups=["B", "typo"]),
+        dict(label_key="clusters", groups="B", reference="median"),
+    ],
+)
+def test_sts_rejects_bad_group_arguments(linear, rng, kw):
+    a = _with_confidence(linear, rng.uniform(0, 0.9, linear.n_obs))
+    assert M.sts(a, **kw).status == "failed"
+
+
+def _with_cosines(adata, cos):
+    """A velocity graph where cell i's neighbours are the next ``cos.shape[1]`` cells."""
+    from scipy.sparse import csr_matrix
+
+    n, k = cos.shape
+    rows = np.repeat(np.arange(n), k)
+    cols = (rows + np.tile(np.arange(1, k + 1), n)) % n
+    a = adata.copy()
+    v = cos.ravel()
+    for key, keep in (("velocity_graph", v > 0), ("velocity_graph_neg", v < 0)):
+        a.uns[key] = csr_matrix((v[keep], (rows[keep], cols[keep])), shape=(n, n))
+    return a
+
+
+def test_ees_counts_equally_likely_neighbours(linear):
     n = linear.n_obs
+    flat = _with_cosines(linear, np.full((n, 8), 0.3))
+    assert M.ees(flat).value == pytest.approx(8.0)
+    assert M.nte(flat).value == pytest.approx(1.0)
 
-    stay = linear.copy()
-    stay.obsp["T_fwd"] = np.eye(n)
-    assert M.sts(stay).value == pytest.approx(1.0)
+    cos = np.full((n, 8), -0.5)
+    cos[:, 0] = 0.9
+    sharp = _with_cosines(linear, cos)
+    assert M.ees(sharp).value == pytest.approx(1.0)
+    assert M.nte(sharp).value < 0.01
 
-    uniform = linear.copy()
-    uniform.obsp["T_fwd"] = np.full((n, n), 1.0 / n)
-    assert M.ees(uniform).value == pytest.approx(1.0, abs=1e-9)
 
-    confident = linear.copy()
-    T = np.zeros((n, n))
-    T[:, 0] = 0.99
-    T[:, 1] = 0.01
-    confident.obsp["T_fwd"] = T
-    assert M.ees(confident).value < 0.2
+def test_ees_is_scvelos_transition_matrix(linear, rng):
+    scv = pytest.importorskip("scvelo")
+    n = linear.n_obs
+    a = _with_cosines(linear, rng.uniform(-1, 1, (n, 10)))
+    T = scv.tl.transition_matrix(a, scale=30, self_transitions=False).tocsr()
+
+    def hill(p, mass=0.95):
+        p = np.sort(p / p.sum())[::-1]
+        m = np.searchsorted(np.cumsum(p), mass, side="left") + 1
+        q = p[:m] / p[:m].sum()
+        return np.exp(-np.sum(q * np.log(q)))
+
+    expect = [hill(T.data[T.indptr[i] : T.indptr[i + 1]]) for i in range(n)]
+    assert M.ees(a).per_cell == pytest.approx(expect, rel=1e-4)
+
+
+def test_ees_scores_only_the_chosen_groups(linear, rng):
+    a = _with_cosines(linear, rng.uniform(-1, 1, (linear.n_obs, 10)))
+    labels = a.obs["clusters"].to_numpy().astype(str)
+    everyone = M.ees(a).per_cell
+    one = M.ees(a, label_key="clusters", groups="B")
+    assert one.value == pytest.approx(everyone[labels == "B"].mean())
+    assert np.isnan(one.per_cell[labels != "B"]).all()
+    assert M.nte(a, label_key="clusters", groups=["A"]).status == "ok"
+    assert M.ees(a, mass=0).status == "failed"
 
 
 # --------------------------------------------------------------------------
@@ -599,7 +697,9 @@ def test_no_metric_ever_raises(gene_space):
         lambda a: M.velocity_consistency(a),
         lambda a: M.tsc(a, time_key="latent_time", true_time_key="stage"),
         lambda a: M.sts(a),
+        lambda a: M.sts_abs(a),
         lambda a: M.ees(a),
+        lambda a: M.nte(a),
         lambda a: M.phase_dir(a),
         lambda a: M.truth_cos(a, gene_space),
         lambda a: M.gamma_corr(a, gene_space),

@@ -8,7 +8,7 @@ take a second ``AnnData``; everything else is one run in, one result out.
 from .coherence import icvcoh, velocity_consistency
 from .direction import cbdir, cbvcoh, cto
 from .groundtruth import gamma_corr, phase_dir, truth_cos
-from .negative import ees, sts
+from .negative import ees, nte, sts, sts_abs
 from .temporal import tsc
 
 #: Metric name -> ``"higher"`` / ``"lower"`` / ``"zero"``.  What "better" means
@@ -21,7 +21,9 @@ DIRECTION = {
     "velocity_consistency": "higher",
     "tsc": "higher",
     "sts": "higher",
+    "sts_abs": "higher",
     "ees": "higher",
+    "nte": "higher",
     "phase_dir": "higher",
     "truth_cos": "higher",
     "gamma_corr": "higher",
@@ -35,7 +37,9 @@ __all__ = [
     "velocity_consistency",
     "tsc",
     "sts",
+    "sts_abs",
     "ees",
+    "nte",
     "phase_dir",
     "truth_cos",
     "gamma_corr",
