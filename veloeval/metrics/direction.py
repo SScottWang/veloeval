@@ -169,6 +169,24 @@ def cbdir(
     Huang, *PNAS* 2021) and the Genome Biology benchmark (2026): in gene space
     the displacement is dominated by genes unrelated to the transition and the
     cosine sits near 0 for every method.
+
+    Examples
+    --------
+    .. code-block:: python
+
+        import veloeval as ve
+        from veloeval import metrics as M
+
+        ve.prepare(adata, space="gene", basis="umap")
+        edges = [
+            ["Ngn3 low EP", "Ngn3 high EP"],
+            ["Ngn3 high EP", "Pre-endocrine"],
+            ["Pre-endocrine", "Beta"],
+        ]
+        res = M.cbdir(adata, label_key="clusters", cluster_edges=edges)
+        res.value      # mean over edges
+        res.per_group  # {"Ngn3 low EP -> Ngn3 high EP": ..., ...}
+        res.per_cell   # score of each boundary cell, nan elsewhere
     """
     labels = get_labels(adata, label_key)
     indices = get_neighbor_indices(adata)
@@ -239,6 +257,23 @@ def cbvcoh(
     embedding here so latent-space methods can be scored alongside the rest.
     Method rankings on this metric can differ between spaces, so compare
     methods only within one *basis*.
+
+    Examples
+    --------
+    .. code-block:: python
+
+        from veloeval import metrics as M
+
+        edges = [
+            ["Ngn3 low EP", "Ngn3 high EP"],
+            ["Ngn3 high EP", "Pre-endocrine"],
+            ["Pre-endocrine", "Beta"],
+        ]
+        res = M.cbvcoh(adata, label_key="clusters", cluster_edges=edges)
+        res.per_group
+
+        # count every neighbour outside the source cluster, not just those in B
+        M.cbvcoh(adata, label_key="clusters", cluster_edges=edges, boundary="non_source")
     """
     labels = get_labels(adata, label_key)
     indices = get_neighbor_indices(adata)
@@ -342,6 +377,25 @@ def cto(
 
     Ties count as wrong, so a constant time scores 0.  Cells with ``nan`` time
     are dropped rather than set to 0.
+
+    Examples
+    --------
+    .. code-block:: python
+
+        from veloeval import metrics as M
+
+        edges = [
+            ["Ngn3 low EP", "Ngn3 high EP"],
+            ["Ngn3 high EP", "Pre-endocrine"],
+            ["Pre-endocrine", "Beta"],
+        ]
+        res = M.cto(
+            adata, label_key="clusters", cluster_edges=edges, time_key="latent_time"
+        )
+        res.value
+
+        # or order whole stages: numeric days or an ordered Categorical
+        M.cto(adata, stage_key="day", time_key="latent_time")
     """
     if stage_key is not None and cluster_edges:
         raise ValueError("pass either cluster_edges or stage_key, not both")

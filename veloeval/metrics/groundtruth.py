@@ -118,6 +118,23 @@ def phase_dir(
     phase is noisiest, which can be exactly where a method fails, so the
     default keeps every cell.  Cosines shrink as dimensions are added, so
     compare values only within one *basis* and *n_dims*.
+
+    Examples
+    --------
+    .. code-block:: python
+
+        import scvelo as scv
+        from veloeval import metrics as M
+
+        # relative FUCCI position on [0, 1), e.g. dynamo's scEU-seq RPE1
+        adata.obs["fucci_phase"] = adata.obs["Cell_cycle_relativePos"]
+        res = M.phase_dir(adata)
+        res.detail     # "median R2 0.47; 100% of cells scored"
+        res.per_group  # {"0-0.1": ..., ..., "0.9-1": ...}
+
+        # in the first 5 PCs instead of UMAP
+        scv.tl.velocity_embedding(adata, basis="pca")
+        M.phase_dir(adata, basis="pca", n_dims=5)
     """
     if phase_key not in adata.obs:
         raise NotApplicable(f"dataset has no cell-cycle phase obs['{phase_key}']")
@@ -232,6 +249,18 @@ def truth_cos(
     cell-shuffled velocity keeps each gene's average direction and scores
     above 0.  The reference is built outside veloeval; for one-shot labelling
     fit the new/total slope on unperturbed, steady-state cells.
+
+    Examples
+    --------
+    .. code-block:: python
+
+        import anndata as ad
+        from veloeval import metrics as M
+
+        ref = ad.read_h5ad("labelling_reference.h5ad")  # same cells, same order
+        genes = adata.var_names[adata.var["velocity_genes"]]
+        res = M.truth_cos(adata, ref, genes=genes)
+        res.detail  # number of genes scored
     """
     if velocity_space(adata) != "gene":
         raise NotApplicable(
@@ -316,6 +345,18 @@ def gamma_corr(
     :math:`\\gamma` itself, so even a perfect method agrees only as far as
     :math:`\\beta` is constant across genes.  As with :func:`truth_cos`,
     compare methods on the same *genes*.
+
+    Examples
+    --------
+    .. code-block:: python
+
+        import anndata as ad
+        from veloeval import metrics as M
+
+        ref = ad.read_h5ad("labelling_reference.h5ad")
+        adata.var["gamma_over_beta"] = adata.var["fit_gamma"] / adata.var["fit_beta"]
+        res = M.gamma_corr(adata, ref, gamma_key="gamma_over_beta", ref_gamma_key="gamma")
+        res.detail
     """
     if gamma_key not in adata.var:
         raise NotApplicable(f"method exposes no per-gene rate var['{gamma_key}']")

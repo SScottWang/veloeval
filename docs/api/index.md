@@ -4,20 +4,9 @@ Generated from the docstrings in the source. Change a docstring, push, and
 these pages change with it.
 
 ```{toctree}
-:maxdepth: 2
-:caption: Metrics
+:maxdepth: 3
 
-direction
-coherence
-temporal
-negative
-groundtruth
-```
-
-```{toctree}
-:maxdepth: 2
-:caption: Supporting
-
+metrics
 result
 prepare
 access

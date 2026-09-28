@@ -137,6 +137,18 @@ def sts(
     :math:`\mathbf x` is whatever space the graph was built in (expression for
     gene-space methods, the method's latent representation otherwise), and
     cosines run higher in fewer dimensions.
+
+    Examples
+    --------
+    .. code-block:: python
+
+        from veloeval import metrics as M
+
+        M.sts(adata)
+
+        # score only terminal clusters, keeping the reference line from all cells
+        M.sts(adata, label_key="clusters", groups=["Alpha", "Beta"])
+        M.sts(adata, label_key="clusters", groups=["Alpha", "Beta"], reference="groups")
     """
     if reference not in _REFERENCES:
         raise ValueError(f"reference must be one of {_REFERENCES}, got {reference!r}")
@@ -183,6 +195,15 @@ def sts_abs(
     -----
     Same space caveat as :func:`sts`: compare runs whose graphs live in spaces
     of similar dimension.
+
+    Examples
+    --------
+    .. code-block:: python
+
+        from veloeval import metrics as M
+
+        M.sts_abs(adata)
+        M.sts_abs(adata, label_key="clusters", groups=["Alpha", "Beta"])
     """
     mask = _group_mask(adata, label_key, groups)
     return _on_groups(1.0 - _confidence(adata, vkey), mask)
@@ -251,6 +272,18 @@ def ees(
     values across datasets -- the benchmark ranks methods within each dataset
     for this reason.  Like :func:`sts`, cosines run higher, and EES lower, in
     fewer dimensions.
+
+    Examples
+    --------
+    .. code-block:: python
+
+        from veloeval import metrics as M
+
+        res = M.ees(adata)
+        res.value     # effective number of destinations per cell
+        res.per_cell
+
+        M.ees(adata, label_key="clusters", groups=["Alpha", "Beta"])
     """
     if not 0 < mass <= 1:
         raise ValueError(f"mass must be in (0, 1], got {mass}")
@@ -316,6 +349,15 @@ def nte(
     -----
     Unlike :func:`ees`, the value does not grow with the number of
     neighbours, but it still moves with *scale*.
+
+    Examples
+    --------
+    .. code-block:: python
+
+        from veloeval import metrics as M
+
+        M.nte(adata)
+        M.nte(adata, label_key="clusters", groups=["Alpha", "Beta"])
     """
     mask = _group_mask(adata, label_key, groups)
 

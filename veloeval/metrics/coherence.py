@@ -66,6 +66,18 @@ def icvcoh(
     The embedding default follows the Genome Biology benchmark (2026) and lets
     latent-space methods be scored alongside the rest.  Method rankings can
     differ between spaces, so compare methods only within one *basis*.
+
+    Examples
+    --------
+    .. code-block:: python
+
+        from veloeval import metrics as M
+
+        res = M.icvcoh(adata, label_key="clusters")
+        res.value
+
+        # the method's own velocity instead of the UMAP projection
+        M.icvcoh(adata, label_key="clusters", basis=None)
     """
     labels = get_labels(adata, label_key)
     indices = get_neighbor_indices(adata)
@@ -132,6 +144,16 @@ def velocity_consistency(adata, *, vkey: str = "velocity"):
     :func:`veloeval.build_neighbor_indices` the two are the same graph.
 
     Requires scvelo (``pip install veloeval[prepare]``).
+
+    Examples
+    --------
+    .. code-block:: python
+
+        from veloeval import metrics as M
+
+        res = M.velocity_consistency(adata)
+        res.value
+        res.per_cell  # equals scVelo's obs["velocity_confidence"]
     """
     import anndata as ad
     import scvelo as scv

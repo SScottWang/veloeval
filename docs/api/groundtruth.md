@@ -19,6 +19,15 @@ of anything here: they need FUCCI reporters or a labelling channel, and
 velocity lives in a learned latent space return `not_applicable` rather than an
 incomparable number. **Read the `not_applicable` details, not just the values.**
 
+```{eval-rst}
+.. autosummary::
+   :toctree: generated
+
+   veloeval.metrics.phase_dir
+   veloeval.metrics.truth_cos
+   veloeval.metrics.gamma_corr
+```
+
 ## The labelling reference
 
 veloeval compares against a reference; it does not build one. Derive it from
@@ -58,12 +67,3 @@ comparing methods, pass them all the same `genes`: a method that leaves
 poorly fitted genes `nan` is otherwise scored only on the genes it fits well.
 For `gamma_corr`, splicing models fix rates only up to each gene's time scale,
 so pass a ratio such as scVelo's `fit_gamma / fit_beta`.
-
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-
-   veloeval.metrics.phase_dir
-   veloeval.metrics.truth_cos
-   veloeval.metrics.gamma_corr
-```

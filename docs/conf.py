@@ -23,6 +23,8 @@ extensions = [
 ]
 
 autosummary_generate = True
+# One sidebar entry per metric page, not a further one for the function on it.
+toc_object_entries = False
 autodoc_member_order = "bysource"
 autodoc_typehints = "description"
 autodoc_typehints_description_target = "documented_params"

@@ -45,6 +45,21 @@ def tsc(adata, *, time_key: str, true_time_key: str):
     Only meaningful when *true_time_key* is an **experimental** observable.
     Pointing it at a pseudotime computed from the same velocity field makes
     the metric circular and it will score near 1 for any method.
+
+    Examples
+    --------
+    .. code-block:: python
+
+        import pandas as pd
+        from veloeval import metrics as M
+
+        res = M.tsc(adata, time_key="latent_time", true_time_key="day")  # numeric
+
+        # string stages need a declared order
+        adata.obs["stage"] = pd.Categorical(
+            adata.obs["stage"], categories=["E12.5", "E13.5", "E14.5"], ordered=True
+        )
+        M.tsc(adata, time_key="latent_time", true_time_key="stage")
     """
     if time_key not in adata.obs:
         raise NotApplicable(f"method infers no obs['{time_key}']")
