@@ -12,3 +12,7 @@ docs/generated/
 docs/api/generated/
 .DS_Store
 *.h5ad
+
+# Local scratch space: audit notebooks, throwaway experiments. Never committed.
+sandbox/
+.ipynb_checkpoints/

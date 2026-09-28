@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "veloeval"
-version = "0.0.1"
+dynamic = ["version"]
 description = "Metrics for benchmarking RNA velocity methods"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -28,7 +28,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-prepare = ["scvelo>=0.2.5"]
+prepare = ["scvelo>=0.2.5", "scanpy>=1.9"]
 plot = ["matplotlib>=3.5"]
 dev = ["pytest>=7", "ruff>=0.4"]
 docs = [
@@ -39,6 +39,9 @@ docs = [
 
 [project.urls]
 Homepage = "https://github.com/SScottWang/veloeval"
+
+[tool.hatch.version]
+path = "veloeval/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["veloeval"]
