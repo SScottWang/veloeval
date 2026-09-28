@@ -159,4 +159,4 @@ def cycle():
     theta = np.linspace(0, 2 * np.pi, n, endpoint=False)
     X = np.column_stack([np.cos(theta), np.sin(theta)])
     V = np.column_stack([-np.sin(theta), np.cos(theta)])  # d/dtheta
-    return make_adata(X, V, obs={"fucci_phase": theta})
+    return make_adata(X, V, obs={"fucci_phase": theta / (2 * np.pi)})

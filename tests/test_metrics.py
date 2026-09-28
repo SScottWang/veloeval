@@ -300,8 +300,43 @@ def test_phase_dir_handles_the_wraparound(cycle):
     """Cells straddling phase 0 must not be scored backwards."""
     per_cell = M.phase_dir(cycle).per_cell
     phi = cycle.obs["fucci_phase"].to_numpy()
-    near_origin = (phi < 0.2) | (phi > 2 * np.pi - 0.2)
+    near_origin = (phi < 0.03) | (phi > 0.97)
     assert np.nanmean(per_cell[near_origin]) == pytest.approx(1.0, abs=0.05)
+
+
+def test_phase_dir_reads_radians_with_period(cycle):
+    radians = cycle.copy()
+    radians.obs["fucci_phase"] = radians.obs["fucci_phase"] * 2 * np.pi
+    assert M.phase_dir(radians, period=2 * np.pi).per_cell == pytest.approx(
+        M.phase_dir(cycle).per_cell
+    )
+
+
+def test_phase_dir_breaks_down_by_phase_bin(cycle):
+    r = M.phase_dir(cycle, n_bins=4)
+    assert list(r.per_group) == ["0-0.25", "0.25-0.5", "0.5-0.75", "0.75-1"]
+    assert all(v == pytest.approx(1.0, abs=0.05) for v in r.per_group.values())
+    assert "median R2" in r.detail
+
+
+def test_phase_dir_min_r2_drops_noisy_neighbourhoods(cycle, rng):
+    noisy = cycle.copy()
+    phase = noisy.obs["fucci_phase"].to_numpy().copy()
+    phase[::2] = rng.uniform(0, 1, phase[::2].size)
+    noisy.obs["fucci_phase"] = phase
+    everyone = M.phase_dir(noisy)
+    strict = M.phase_dir(noisy, min_r2=0.5)
+    assert np.isfinite(strict.per_cell).sum() < np.isfinite(everyone.per_cell).sum()
+
+
+def test_phase_dir_n_dims_ignores_trailing_columns(cycle, rng):
+    padded = cycle.copy()
+    for key in ("X_umap", "velocity_umap"):
+        extra = rng.normal(size=(padded.n_obs, 3))
+        padded.obsm[key] = np.hstack([padded.obsm[key], extra])
+    assert M.phase_dir(padded, n_dims=2).per_cell == pytest.approx(
+        M.phase_dir(cycle).per_cell
+    )
 
 
 def test_phase_dir_not_applicable_without_phase(linear):
@@ -311,7 +346,8 @@ def test_phase_dir_not_applicable_without_phase(linear):
 
 
 def test_truth_cos_against_itself_is_one(gene_space):
-    assert M.truth_cos(gene_space, gene_space.copy()).value == pytest.approx(1.0, abs=1e-6)
+    value = M.truth_cos(gene_space, gene_space.copy()).value
+    assert value == pytest.approx(1.0, abs=1e-6)
 
 
 def test_truth_cos_opposite_is_minus_one(gene_space):
@@ -340,6 +376,29 @@ def test_gamma_corr(gene_space, rng):
     a.var["fit_gamma"] = g
     b.var["fit_gamma"] = g * 3 + 1  # monotone -> rank correlation 1
     assert M.gamma_corr(a, b).value == pytest.approx(1.0, abs=1e-9)
+
+
+def test_truth_cos_scores_only_the_chosen_genes(gene_space, rng):
+    ref = gene_space.copy()
+    half = gene_space.n_vars // 2
+    ref.layers["velocity"] = np.asarray(ref.layers["velocity"]).copy()
+    ref.layers["velocity"][:, half:] = rng.normal(size=(ref.n_obs, ref.n_vars - half))
+    chosen = gene_space.var_names[:half]
+    res = M.truth_cos(gene_space, ref, genes=chosen)
+    assert res.value == pytest.approx(1.0, abs=1e-6)
+    assert res.detail == f"{half} genes"
+    assert M.truth_cos(gene_space, ref).detail == f"{gene_space.n_vars} genes"
+
+
+def test_gamma_corr_scores_only_the_chosen_genes(gene_space, rng):
+    a, b = gene_space.copy(), gene_space.copy()
+    g = rng.random(a.n_vars)
+    a.var["fit_gamma"] = g
+    b.var["fit_gamma"] = np.where(np.arange(a.n_vars) < 10, g, rng.random(a.n_vars))
+    res = M.gamma_corr(a, b, genes=a.var_names[:10])
+    assert res.value == pytest.approx(1.0, abs=1e-9)
+    assert res.detail == "10 genes"
+    assert M.gamma_corr(a, b).value < 0.99
 
 
 def test_gamma_corr_not_applicable_for_rate_free_methods(gene_space, rng):
