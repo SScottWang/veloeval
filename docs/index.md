@@ -21,6 +21,10 @@ api/index
 pip install git+https://github.com/SScottWang/veloeval.git@v0.0.1
 ```
 
+`prepare()` and `velocity_consistency` (which calls scVelo's own
+`velocity_confidence`) also need scvelo and scanpy: install with the `prepare`
+extra, `pip install "veloeval[prepare] @ git+https://github.com/SScottWang/veloeval.git@v0.0.1"`.
+
 Pin a tag rather than tracking `main`, and record `veloeval.__version__`
 alongside the numbers. Without it a table computed before a metric was fixed is
 indistinguishable from one computed after.
@@ -49,12 +53,14 @@ r.per_cell  # array, nan where the cell could not be scored
 | --- | --- | --- | --- |
 | **direction** | {func}`~veloeval.metrics.cbdir` | curated edges | higher |
 | | {func}`~veloeval.metrics.cbvcoh` | curated edges | higher |
-| | {func}`~veloeval.metrics.cto` | curated edges, inferred time | higher |
+| | {func}`~veloeval.metrics.cto` | inferred time; curated edges or measured stages | higher |
 | **coherence** | {func}`~veloeval.metrics.icvcoh` | cell-type labels | higher |
 | | {func}`~veloeval.metrics.velocity_consistency` | — | higher |
 | **temporal** | {func}`~veloeval.metrics.tsc` | measured time axis | higher |
-| **negative control** | {func}`~veloeval.metrics.sts` | transition matrix | higher |
-| | {func}`~veloeval.metrics.ees` | transition matrix | higher |
+| **negative control** | {func}`~veloeval.metrics.sts` | velocity graph | higher |
+| | {func}`~veloeval.metrics.sts_abs` | velocity graph | higher |
+| | {func}`~veloeval.metrics.ees` | velocity graph | higher |
+| | {func}`~veloeval.metrics.nte` | velocity graph | higher |
 | **ground truth** | {func}`~veloeval.metrics.phase_dir` | FUCCI phase | higher |
 | | {func}`~veloeval.metrics.truth_cos` | labelling reference | higher |
 | | {func}`~veloeval.metrics.gamma_corr` | labelling reference, per-gene rate | higher |
@@ -95,7 +101,14 @@ group: three seeds where one crashed must not be reported as a confident mean.
 
 ## Reference parity
 
-`cbdir`, `cbvcoh` and `icvcoh` follow VeloAE (Qiao & Huang, *PNAS* 2021);
-`tsc`, `sts` and `ees` follow the 2026 *Genome Biology* benchmark. They have not
+`cbdir` follows VeloAE (Qiao & Huang, *PNAS* 2021) and the 2026 *Genome
+Biology* benchmark; `cbvcoh` follows VeloAE; `cto` is the CTO of the
+*Genome Biology* benchmark, a refinement of VeloVAE's Time Accuracy Score (Gu et al.);
+`sts` is scVelo's self-transition probability (Bergen et al., 2020) as used by the
+*Genome Biology* benchmark, and `sts_abs` its variant without the 98th-percentile
+reference; `icvcoh`, `tsc` and `ees` follow the *Genome Biology* benchmark, and `nte` is
+the normalised entropy its code computes next to `ees`. `cbdir`, `cbvcoh` and `icvcoh` all read
+the UMAP-projected velocity by default (VeloAE computed the two coherence
+metrics on `layers`; pass `basis=None` to `icvcoh` for that). They have not
 yet been checked against those implementations on the same data. **Until they
 are, do not present these numbers as reproducing published ones.**

@@ -5,9 +5,8 @@ End to end, the way the pipeline uses it.
 ## In the method wrapper
 
 At the end of Module 2, once the method has written its velocity, call
-{func}`~veloeval.prepare.prepare`. It gives every method the same kNN, the same
-embedding projection and the same transition matrix, and records the parameters
-it used in `adata.uns["veloeval"]["prepared"]`.
+{func}`~veloeval.prepare.prepare`. It gives every method the same kNN and the same
+embedding projection, and records the parameters it used in `adata.uns["veloeval"]["prepared"]`.
 
 ```python
 import veloeval as ve
@@ -57,7 +56,9 @@ results = {
     "tsc": M.tsc(adata, time_key="latent_time",
                  true_time_key=ds.get("time_key", "__absent__")),
     "sts": M.sts(adata),
+    "sts_abs": M.sts_abs(adata),
     "ees": M.ees(adata),
+    "nte": M.nte(adata),
     "phase_dir": M.phase_dir(adata, phase_key=ds.get("phase_key", "__absent__")),
 }
 
@@ -80,9 +81,15 @@ The two metrics needing a labelling reference take a second AnnData:
 
 ```python
 ref = ad.read_h5ad(labelling_reference_path)
-results["truth_cos"] = M.truth_cos(adata, ref)
-results["gamma_corr"] = M.gamma_corr(adata, ref)
+results["truth_cos"] = M.truth_cos(adata, ref, genes=scored_genes)
+adata.var["gamma_over_beta"] = adata.var["fit_gamma"] / adata.var["fit_beta"]
+results["gamma_corr"] = M.gamma_corr(
+    adata, ref, gamma_key="gamma_over_beta", genes=scored_genes
+)
 ```
+
+Use the same `scored_genes` for every method in the table; see
+{doc}`api/groundtruth` for how to build the reference.
 
 ## Reading one result
 

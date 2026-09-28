@@ -14,6 +14,10 @@ definition should.
 pip install git+https://github.com/SScottWang/veloeval.git@v0.0.1
 ```
 
+`prepare()` and `velocity_consistency` (which calls scVelo's own
+`velocity_confidence`) also need scvelo and scanpy: install with the `prepare`
+extra, `pip install "veloeval[prepare] @ git+https://github.com/SScottWang/veloeval.git@v0.0.1"`.
+
 ## Use
 
 ```python
@@ -34,11 +38,12 @@ r.status, r.value      # ("ok", 0.43)
 
 | group | metric | needs | direction |
 | --- | --- | --- | --- |
-| direction | `cbdir`, `cbvcoh`, `cto` | curated `cluster_edges` | higher |
+| direction | `cbdir`, `cbvcoh` | curated `cluster_edges` | higher |
+| | `cto` | inferred time; `cluster_edges` or measured stages | higher |
 | coherence | `icvcoh` | cell-type labels | higher |
 | | `velocity_consistency` | — | higher |
 | temporal | `tsc` | measured time axis | higher |
-| negative control | `sts`, `ees` | transition matrix | higher |
+| negative control | `sts`, `sts_abs`, `ees`, `nte` | velocity graph | higher |
 | ground truth | `phase_dir` | FUCCI phase | higher |
 | | `truth_cos`, `gamma_corr` | labelling reference | higher |
 
@@ -103,7 +108,14 @@ explanation. readthedocs rebuilds on every push.
 
 ## Reference parity
 
-`cbdir`, `cbvcoh` and `icvcoh` follow VeloAE (Qiao & Huang, *PNAS* 2021);
-`tsc`, `sts` and `ees` follow the 2026 *Genome Biology* benchmark. They have not
+`cbdir` follows VeloAE (Qiao & Huang, *PNAS* 2021) and the 2026 *Genome
+Biology* benchmark; `cbvcoh` follows VeloAE; `cto` is the CTO of the
+*Genome Biology* benchmark, a refinement of VeloVAE's Time Accuracy Score (Gu et al.);
+`sts` is scVelo's self-transition probability (Bergen et al., 2020) as used by the
+*Genome Biology* benchmark, and `sts_abs` its variant without the 98th-percentile
+reference; `icvcoh`, `tsc` and `ees` follow the *Genome Biology* benchmark, and `nte` is
+the normalised entropy its code computes next to `ees`. `cbdir`, `cbvcoh` and `icvcoh` all read
+the UMAP-projected velocity by default (VeloAE computed the two coherence
+metrics on `layers`; pass `basis=None` to `icvcoh` for that). They have not
 yet been checked against those implementations on the same data. Until they are,
 do not present these numbers as reproducing published ones.
