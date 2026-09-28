@@ -14,6 +14,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import veloeval as ve
+
 
 def knn_indices(X: np.ndarray, k: int = 6) -> np.ndarray:
     from sklearn.neighbors import NearestNeighbors
@@ -36,7 +38,7 @@ def make_adata(X_emb, V_emb, labels=None, V_gene=None, obs=None, k=6):
     adata.layers["velocity"] = np.asarray(V_gene, dtype=np.float64)
     adata.obsm["X_umap"] = np.asarray(X_emb, dtype=np.float64)
     adata.obsm["velocity_umap"] = np.asarray(V_emb, dtype=np.float64)
-    adata.uns["neighbors"] = {"indices": knn_indices(np.asarray(X_emb), k)}
+    adata.obsm[ve.KNN_KEY] = knn_indices(np.asarray(X_emb), k)
     if labels is not None:
         adata.obs["clusters"] = pd.Categorical(labels)
     return adata

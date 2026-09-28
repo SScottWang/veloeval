@@ -8,7 +8,6 @@ import pytest
 import veloeval as ve
 from veloeval import metrics as M
 
-
 # --------------------------------------------------------------------------
 # Direction
 # --------------------------------------------------------------------------
@@ -156,7 +155,135 @@ def test_tsc_monotone_and_reversed(linear):
 
 def test_tsc_not_applicable_without_measured_axis(linear):
     linear.obs["latent_time"] = np.linspace(0, 1, linear.n_obs)
-    assert M.tsc(linear, time_key="latent_time", true_time_key="nope").status == "not_applicable"
+    r = M.tsc(linear, time_key="latent_time", true_time_key="nope")
+    assert r.status == "not_applicable"
+
+
+# --------------------------------------------------------------------------
+# The shared neighbourhood
+# --------------------------------------------------------------------------
+
+@pytest.fixture
+def blobs(rng):
+    """Three overlapping clusters, 80 genes, PCA already run to 30 components.
+
+    More than 50 genes because below that scanpy ignores X_pca and n_pcs and
+    measures distance in X directly.  Overlapping so that changing n_pcs
+    actually changes the neighbourhood.
+    """
+    import anndata as ad
+    import scanpy as sc
+
+    centres = rng.normal(scale=1.5, size=(3, 80))
+    X = np.repeat(centres, 40, axis=0) + rng.normal(scale=1.0, size=(120, 80))
+    adata = ad.AnnData(X=X.astype(np.float32))
+    sc.pp.pca(adata, n_comps=30)
+    return adata
+
+
+def test_build_neighbor_indices_follows_scanpy_n_neighbors(blobs):
+    # scanpy's n_neighbors counts the cell itself: 10 means 9 other cells.
+    idx = ve.build_neighbor_indices(blobs, n_neighbors=10, n_pcs=5)
+
+    assert idx.shape == (blobs.n_obs, 9)
+    assert not any(i in row for i, row in enumerate(idx)), "cell is its own neighbour"
+    np.testing.assert_array_equal(idx, blobs.obsm[ve.KNN_KEY])
+
+
+def test_build_neighbor_indices_matches_exact_knn_on_the_same_pcs(blobs):
+    from sklearn.neighbors import NearestNeighbors
+
+    idx = ve.build_neighbor_indices(blobs, n_neighbors=8, n_pcs=5)
+
+    rep = np.asarray(blobs.obsm["X_pca"])[:, :5]
+    exact = NearestNeighbors(n_neighbors=8).fit(rep).kneighbors(rep)[1]
+    for mine, theirs in zip(idx, exact):
+        assert set(mine) == set(theirs[1:])
+
+
+def test_build_neighbor_indices_honours_n_pcs(blobs):
+    five = ve.build_neighbor_indices(blobs, n_neighbors=8, n_pcs=5)
+    thirty = ve.build_neighbor_indices(blobs, n_neighbors=8, n_pcs=30)
+    changed = sum(set(a) != set(b) for a, b in zip(five, thirty))
+    assert changed > blobs.n_obs // 2, f"only {changed} cells moved"
+
+
+def test_build_neighbor_indices_reuses_the_methods_graph_by_default(blobs):
+    import scanpy as sc
+
+    sc.pp.neighbors(blobs, n_neighbors=6, n_pcs=5)  # what the method's pipeline did
+    idx = ve.build_neighbor_indices(blobs, n_neighbors=30, n_pcs=30)
+
+    assert idx.shape == (blobs.n_obs, 5), "the method's k, not ours"
+    D = blobs.obsp["distances"]
+    for i in (0, 57, 119):
+        assert set(idx[i]) == set(D[i].indices)
+    assert blobs.uns["veloeval"]["prepared"]["neighbors"]["source"] == "reused"
+
+
+def test_build_neighbor_indices_overwrite_leaves_the_methods_graph_alone(blobs):
+    """scv.tl.velocity_graph reads obsp['distances'], so overwrite builds into
+    a separate slot instead of replacing it."""
+    import scanpy as sc
+
+    sc.pp.neighbors(blobs, n_neighbors=6, n_pcs=5)
+    before = blobs.obsp["distances"].copy()
+
+    idx = ve.build_neighbor_indices(blobs, n_neighbors=10, n_pcs=5, overwrite=True)
+
+    assert idx.shape == (blobs.n_obs, 9)
+    assert (blobs.obsp["distances"] != before).nnz == 0
+    assert blobs.uns["neighbors"]["params"]["n_neighbors"] == 6
+    assert blobs.uns["veloeval"]["prepared"]["neighbors"]["source"] == "built"
+
+
+def test_build_neighbor_indices_handles_scanpys_approximate_layout(blobs):
+    """Above 8192 cells scanpy stores the cell itself (at distance 0) plus one
+    extra neighbour per row.  Reproduced by hand here rather than with 8192
+    cells: the rows must still come out as n_neighbors - 1 non-self cells."""
+    from scipy.sparse import csr_matrix
+
+    n, k = blobs.n_obs, 4
+    rep = np.asarray(blobs.obsm["X_pca"])[:, :5]
+    d = np.linalg.norm(rep[:, None] - rep[None], axis=2)
+    order = np.argsort(d, axis=1)[:, : k + 1]  # self + k others
+    rows = np.repeat(np.arange(n), k + 1)
+    D = csr_matrix((d[rows, order.ravel()], (rows, order.ravel())), shape=(n, n))
+    blobs.obsp["distances"] = D
+    blobs.uns["neighbors"] = {"distances_key": "distances", "params": {"n_neighbors": k}}
+
+    idx = ve.build_neighbor_indices(blobs)
+
+    assert idx.shape == (n, k - 1)
+    assert not any(i in row for i, row in enumerate(idx))
+    for i in range(n):
+        assert set(idx[i]) == set(order[i, 1:k])
+
+
+def test_build_neighbor_indices_does_not_break_a_later_scanpy_call(blobs):
+    """Regression: the indices used to go into uns['neighbors'], which left a
+    record with no 'params' and made scanpy's own Neighbors.__init__ raise."""
+    import scanpy as sc
+
+    ve.build_neighbor_indices(blobs, n_neighbors=8, n_pcs=5)
+    sc.pp.neighbors(blobs, n_neighbors=6, n_pcs=5)  # must not raise
+
+
+def test_get_neighbor_indices_still_reads_the_legacy_slot(blobs):
+    idx = ve.build_neighbor_indices(blobs, n_neighbors=5, n_pcs=5)
+    legacy = blobs.copy()
+    del legacy.obsm[ve.KNN_KEY]
+    legacy.uns["neighbors"] = {"indices": idx}
+
+    from veloeval.access import get_neighbor_indices
+
+    np.testing.assert_array_equal(get_neighbor_indices(legacy), idx)
+
+
+def test_build_neighbor_indices_accepts_a_latent_space(blobs):
+    blobs.obsm["X_latent"] = np.asarray(blobs.X)[:, :3]
+    idx = ve.build_neighbor_indices(blobs, n_neighbors=6, n_pcs=None, use_rep="X_latent")
+    assert idx.shape == (blobs.n_obs, 5)
 
 
 # --------------------------------------------------------------------------
@@ -201,6 +328,7 @@ def test_the_four_statuses_are_distinguishable(linear, edges):
 
     # failed: something genuinely raised
     corrupt = linear.copy()
+    del corrupt.obsm[ve.KNN_KEY]
     corrupt.uns["neighbors"] = {"indices": "not an array"}
     assert M.cbdir(corrupt, label_key="clusters", cluster_edges=edges).status == "failed"
 

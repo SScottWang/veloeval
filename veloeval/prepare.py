@@ -17,31 +17,92 @@ from typing import Any
 
 import numpy as np
 
-from .access import set_velocity_space
+from .access import KNN_KEY, set_velocity_space
 
 __all__ = ["prepare", "project_velocity", "build_neighbor_indices"]
 
 
-def build_neighbor_indices(adata, n_neighbors: int = 30, use_rep: str | None = None):
-    """Write ``uns['neighbors']['indices']`` -- the kNN every local metric uses.
+def build_neighbor_indices(
+    adata,
+    n_neighbors: int = 30,
+    n_pcs: int = 30,
+    use_rep: str | None = None,
+    overwrite: bool = False,
+):
+    """Write ``obsm['veloeval_knn']`` -- the kNN every local metric uses.
 
-    Uses the same representation for every method so that "neighbourhood"
-    means the same thing across the comparison.
+    By default the graph the velocity method's own pipeline left in
+    ``obsp['distances']`` is reused: that is the neighbourhood the method was
+    fitted on.  With ``overwrite=True``, or when there is no graph yet, one is
+    built with :func:`scanpy.pp.neighbors` into a separate slot, so the method's
+    own graph -- which ``scv.tl.velocity_graph`` reads -- is left untouched.
+
+    Which of the two happened is recorded in
+    ``uns['veloeval']['prepared']['neighbors']``: two methods that each reuse
+    their own graph are not necessarily scored on the same neighbourhood.
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+    n_neighbors, n_pcs, use_rep
+        Passed to :func:`scanpy.pp.neighbors` when a graph is built, and mean
+        exactly what they mean there: *n_neighbors* counts the cell itself, so
+        30 gives 29 neighbours.  The defaults are scVelo's (``scv.pp.moments``
+        uses 30 and 30), not scanpy's (15 and 50).  Ignored when an existing
+        graph is reused.
+    overwrite : bool, default: False
+        Build a new graph even if the method already has one.
+
+    Returns
+    -------
+    numpy.ndarray
+        ``(n_obs, k)`` array of neighbour indices, excluding the cell itself.
     """
-    from sklearn.neighbors import NearestNeighbors
+    import scanpy as sc
+    from scipy.sparse import csr_matrix
 
-    if use_rep and use_rep in adata.obsm:
-        X = np.asarray(adata.obsm[use_rep])
-    elif "X_pca" in adata.obsm:
-        X = np.asarray(adata.obsm["X_pca"])
+    if overwrite or "distances" not in adata.obsp:
+        sc.pp.neighbors(
+            adata,
+            n_neighbors=n_neighbors,
+            n_pcs=n_pcs,
+            use_rep=use_rep,
+            key_added="veloeval_neighbors",
+        )
+        graph = adata.uns["veloeval_neighbors"]
+        source = "built"
     else:
-        X = adata.X.toarray() if hasattr(adata.X, "toarray") else np.asarray(adata.X)
+        graph = adata.uns.get("neighbors", {})
+        source = "reused"
+    distances = csr_matrix(adata.obsp[graph.get("distances_key", "distances")])
+    params = dict(graph.get("params", {}))
 
-    k = min(n_neighbors + 1, adata.n_obs)
-    nn = NearestNeighbors(n_neighbors=k).fit(X)
-    indices = nn.kneighbors(X, return_distance=False)
+    # Sort each row by distance and drop the cell itself.  Not optional: below
+    # 8192 cells scanpy stores the other n_neighbors - 1 cells, above it
+    # switches to an approximate search that also stores the cell itself and
+    # one extra neighbour.
+    rows = []
+    for i in range(adata.n_obs):
+        start, end = distances.indptr[i], distances.indptr[i + 1]
+        cols = distances.indices[start:end]
+        dists = distances.data[start:end]
+        cols, dists = cols[cols != i], dists[cols != i]
+        rows.append(cols[np.argsort(dists, kind="stable")])
 
-    adata.uns.setdefault("neighbors", {})["indices"] = indices
+    if "n_neighbors" in params:
+        k = int(params["n_neighbors"]) - 1
+    else:
+        k = min(len(r) for r in rows)
+    short = [i for i, r in enumerate(rows) if len(r) < k]
+    if short:
+        raise ValueError(
+            f"{len(short)} cells have fewer than {k} neighbours in the graph, "
+            f"e.g. cell {short[0]}"
+        )
+    indices = np.array([r[:k] for r in rows], dtype=np.int64)
+
+    adata.obsm[KNN_KEY] = indices
+    _record(adata, "neighbors", {"source": source, "k": k, **params})
     return indices
 
 
@@ -68,18 +129,34 @@ def prepare(
     basis: str = "umap",
     vkey: str = "velocity",
     n_neighbors: int = 30,
+    n_pcs: int = 30,
     use_rep: str | None = None,
-    transition: bool = True,
+    overwrite_neighbors: bool = False,
+    transition: bool = False,
+    pseudotime: bool = False,
 ) -> None:
     """One call at the end of a method wrapper.
 
-    Declares the velocity space, builds the shared kNN, projects velocity into
-    *basis*, and (optionally) writes a transition matrix to ``obsp['T_fwd']``.
-    Everything it does is recorded in ``uns['veloeval']['prepared']``.
+    Declares the velocity space, picks up (or builds) the kNN, projects velocity
+    into *basis*, (with *transition*) writes scVelo's default transition matrix
+    to ``obsp['T_fwd']`` -- no metric reads it; the negative-control metrics
+    build theirs from the velocity graph -- and (with *pseudotime*) writes
+    ``obs['{vkey}_pseudotime']`` with ``scvelo.tl.velocity_pseudotime`` when the
+    method left none -- needed only to reproduce the Genome Biology benchmark's
+    CTO, see :func:`~veloeval.metrics.cto`.  Everything it does is recorded in
+    ``uns['veloeval']['prepared']``.
+
+    See :func:`build_neighbor_indices` for *n_neighbors*, *n_pcs*, *use_rep* and
+    *overwrite_neighbors*.
     """
     set_velocity_space(adata, space)
-    build_neighbor_indices(adata, n_neighbors=n_neighbors, use_rep=use_rep)
-    _record(adata, "neighbors", {"n_neighbors": n_neighbors, "use_rep": use_rep})
+    build_neighbor_indices(
+        adata,
+        n_neighbors=n_neighbors,
+        n_pcs=n_pcs,
+        use_rep=use_rep,
+        overwrite=overwrite_neighbors,
+    )
 
     try:
         project_velocity(adata, basis=basis, vkey=vkey)
@@ -94,6 +171,16 @@ def prepare(
             _record(adata, "T_fwd", {"scvelo": scv.__version__})
         except Exception as exc:  # noqa: BLE001
             _record(adata, "T_fwd", {"error": f"{type(exc).__name__}: {exc}"})
+
+    ptime = f"{vkey}_pseudotime"
+    if pseudotime and ptime not in adata.obs:
+        try:
+            import scvelo as scv
+
+            scv.tl.velocity_pseudotime(adata, vkey=vkey)
+            _record(adata, ptime, {"scvelo": scv.__version__})
+        except Exception as exc:  # noqa: BLE001
+            _record(adata, ptime, {"error": f"{type(exc).__name__}: {exc}"})
 
 
 def _record(adata, field: str, params: dict[str, Any]) -> None:

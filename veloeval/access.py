@@ -19,10 +19,13 @@ Two rules, both deliberate:
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
+from pandas.api.types import is_bool_dtype, is_numeric_dtype
 
 from .result import MissingInput, NotApplicable
 
 __all__ = [
+    "KNN_KEY",
     "VeloSpace",
     "velocity_space",
     "set_velocity_space",
@@ -31,9 +34,17 @@ __all__ = [
     "get_embedding",
     "get_neighbor_indices",
     "get_transition_matrix",
+    "get_velocity_graph",
     "get_labels",
+    "get_stages",
     "gene_coverage",
 ]
+
+#: ``obsm`` key holding the shared kNN: an ``(n_obs, k)`` array of cell indices,
+#: excluding the cell itself.  In ``obsm`` rather than ``uns`` because that is
+#: what a per-cell array of fixed width is for, and because ``uns['neighbors']``
+#: is scanpy's.
+KNN_KEY = "veloeval_knn"
 
 #: Where a method's velocity vectors live.
 #:
@@ -104,7 +115,9 @@ def gene_coverage(adata, vkey: str = "velocity") -> tuple[int, int]:
     raise MissingInput(f"layers['{vkey}']")
 
 
-def get_velocity_embedding(adata, basis: str = "umap", vkey: str = "velocity") -> np.ndarray:
+def get_velocity_embedding(
+    adata, basis: str = "umap", vkey: str = "velocity"
+) -> np.ndarray:
     """Velocity projected into ``obsm['{vkey}_{basis}']``.
 
     Not computed here -- see the module docstring.  Produce it in the pipeline
@@ -124,11 +137,20 @@ def get_embedding(adata, basis: str = "umap") -> np.ndarray:
 
 
 def get_neighbor_indices(adata) -> np.ndarray:
-    """kNN index array ``(n_cells, k)`` from ``uns['neighbors']['indices']``."""
-    nn = adata.uns.get("neighbors", {})
-    if "indices" not in nn:
-        raise MissingInput("uns['neighbors']['indices']")
-    return np.asarray(nn["indices"])
+    """kNN index array ``(n_cells, k)`` from ``obsm['veloeval_knn']``.
+
+    Falls back to ``uns['neighbors']['indices']``, which is where
+    :func:`veloeval.build_neighbor_indices` used to write.  That slot belongs to
+    scanpy -- putting a bare index array there leaves a malformed neighbours
+    record that makes a later :func:`scanpy.pp.neighbors` raise -- so it is read
+    but no longer written.
+    """
+    if KNN_KEY in adata.obsm:
+        return np.asarray(adata.obsm[KNN_KEY])
+    legacy = adata.uns.get("neighbors", {})
+    if "indices" in legacy:
+        return np.asarray(legacy["indices"])
+    raise MissingInput(f"obsm['{KNN_KEY}']")
 
 
 def get_transition_matrix(adata, key: str = "T_fwd"):
@@ -138,9 +160,58 @@ def get_transition_matrix(adata, key: str = "T_fwd"):
     return adata.obsp[key]
 
 
+def get_velocity_graph(adata, vkey: str = "velocity", *, negative: bool = False):
+    """scVelo's cosine graph as CSR.
+
+    ``{vkey}_graph`` holds the positive cosines; with *negative*,
+    ``{vkey}_graph_neg`` holds the negative ones.  scVelo 0.3 writes them to
+    ``uns``; later versions to ``obsp``.
+    """
+    from scipy.sparse import csr_matrix
+
+    key = f"{vkey}_graph_neg" if negative else f"{vkey}_graph"
+    for store in (adata.obsp, adata.uns):
+        if key in store:
+            return csr_matrix(store[key])
+    raise MissingInput(f"obsp['{key}'] or uns['{key}']")
+
+
 def get_labels(adata, label_key: str | None) -> np.ndarray:
     if not label_key:
         raise NotApplicable("no cell-type labels for this dataset")
     if label_key not in adata.obs:
         raise MissingInput(f"obs['{label_key}']")
     return np.asarray(adata.obs[label_key].values)
+
+
+def get_stages(adata, key: str) -> list:
+    """Stages present in ``obs[key]``, earliest first.
+
+    Numbers sort by value.  Strings carry no reliable order -- ``"day10"`` sorts
+    before ``"day2"`` -- so they must come as an ordered ``Categorical``, and
+    anything else raises ``ValueError`` rather than being ranked silently wrong.
+    """
+    if key not in adata.obs:
+        raise MissingInput(f"obs['{key}']")
+    col = adata.obs[key]
+    if isinstance(col.dtype, pd.CategoricalDtype):
+        cats = col.cat.categories
+        if col.cat.ordered:
+            order = list(cats)
+        elif is_numeric_dtype(cats):
+            order = sorted(cats)
+        else:
+            raise ValueError(_stage_order_hint(key))
+        present = set(col.dropna().unique())
+        return [c for c in order if c in present]
+    if is_numeric_dtype(col) and not is_bool_dtype(col):
+        return sorted(col.dropna().unique())
+    raise ValueError(_stage_order_hint(key))
+
+
+def _stage_order_hint(key: str) -> str:
+    return (
+        f"obs['{key}'] holds strings with no declared order; make it an ordered "
+        f"Categorical, e.g. adata.obs['{key}'] = pd.Categorical(adata.obs['{key}'], "
+        "categories=[...earliest to latest...], ordered=True)"
+    )

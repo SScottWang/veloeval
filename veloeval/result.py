@@ -48,10 +48,19 @@ class MetricResult:
     status
         Why the value is (or is not) there.  See module docstring.
     detail
-        Human-readable explanation; empty when ``status == "ok"``.
+        Human-readable explanation.  When ``status == "ok"`` it is usually
+        empty, or notes which input the value was computed from.
     per_cell
         Optional per-cell array behind the scalar.  Not serialized to CSV;
         used by the plotting layer and for diagnosing low scores.
+    per_group
+        Optional group -> score mapping behind the scalar, where the groups are
+        whatever the metric averages over last: cluster edges for
+        :func:`~veloeval.metrics.cbdir`, clusters for
+        :func:`~veloeval.metrics.icvcoh`.  A single low ``value`` cannot
+        distinguish "every group is mediocre" from "one group is inverted", and
+        those call for different follow-up, so the breakdown is returned rather
+        than recomputed by the caller.
     """
 
     name: str
@@ -59,6 +68,9 @@ class MetricResult:
     status: Status = "ok"
     detail: str = ""
     per_cell: np.ndarray | None = field(default=None, repr=False, compare=False)
+    per_group: dict[str, float] | None = field(
+        default=None, repr=False, compare=False
+    )
 
     def __float__(self) -> float:
         return float("nan") if self.value is None else float(self.value)
@@ -67,8 +79,19 @@ class MetricResult:
         return self.status == "ok"
 
 
-def ok(name: str, value: float, per_cell: np.ndarray | None = None) -> MetricResult:
-    return MetricResult(name=name, value=float(value), status="ok", per_cell=per_cell)
+def ok(
+    name: str,
+    value: float,
+    per_cell: np.ndarray | None = None,
+    per_group: dict[str, float] | None = None,
+) -> MetricResult:
+    return MetricResult(
+        name=name,
+        value=float(value),
+        status="ok",
+        per_cell=per_cell,
+        per_group=per_group,
+    )
 
 
 def not_applicable(name: str, detail: str) -> MetricResult:
@@ -102,9 +125,10 @@ class NotApplicable(Exception):
 def metric(fn):
     """Wrap a metric body so it always returns a :class:`MetricResult`.
 
-    The body may return a float, an ``(value, per_cell)`` tuple, or a
-    ``MetricResult``; and may raise :class:`MissingInput` /
-    :class:`NotApplicable` from anywhere, including deep inside accessors.
+    The body may return a float, an ``(value, per_cell)`` tuple, an
+    ``(value, per_cell, per_group)`` tuple, or a ``MetricResult``; and may raise
+    :class:`MissingInput` / :class:`NotApplicable` from anywhere, including deep
+    inside accessors.
     """
 
     @functools.wraps(fn)
@@ -122,8 +146,7 @@ def metric(fn):
         if isinstance(out, MetricResult):
             return out
         if isinstance(out, tuple):
-            value, per_cell = out
-            return ok(name, value, per_cell)
+            return ok(name, *out)
         return ok(name, out)
 
     return wrapper
