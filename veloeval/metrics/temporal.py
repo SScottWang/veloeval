@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
+from pandas.api.types import is_numeric_dtype
 
 from .._math import spearman
+from ..access import get_stages
 from ..result import NotApplicable, metric
 
 __all__ = ["tsc"]
@@ -27,9 +30,10 @@ def tsc(adata, *, time_key: str, true_time_key: str):
     time_key : str
         Column holding the method's inferred time.  Absent -> ``not_applicable``.
     true_time_key : str
-        Column holding the *measured* time axis.  Ordered categorical stages
-        (``"E7.0" < "E7.25" < ...``) are ranked by their category order;
-        anything else is read as numeric.  Absent -> ``not_applicable``.
+        Column holding the *measured* time axis.  Numeric values are ranked
+        directly; string stages (``"E7.0" < "E7.25" < ...``) must be an ordered
+        ``Categorical`` and are ranked by category order -- anything else fails,
+        since string sort order is not time order.  Absent -> ``not_applicable``.
 
     Returns
     -------
@@ -48,16 +52,11 @@ def tsc(adata, *, time_key: str, true_time_key: str):
         raise NotApplicable(f"dataset has no measured time axis obs['{true_time_key}']")
 
     inferred = np.asarray(adata.obs[time_key].values, dtype=np.float64)
-    truth = adata.obs[true_time_key].values
-
-    if truth.dtype == object or str(truth.dtype).startswith("category"):
-        # Ordered categorical stages ("E7.0" < "E7.25" < ...): rank by sort order.
-        codes = adata.obs[true_time_key].astype("category")
-        if not codes.cat.ordered:
-            codes = codes.cat.as_ordered()
-        truth = codes.cat.codes.to_numpy().astype(np.float64)
-        truth[truth < 0] = np.nan
+    col = adata.obs[true_time_key]
+    if is_numeric_dtype(col) and not isinstance(col.dtype, pd.CategoricalDtype):
+        truth = col.to_numpy(dtype=np.float64)
     else:
-        truth = np.asarray(truth, dtype=np.float64)
+        rank = {s: r for r, s in enumerate(get_stages(adata, true_time_key))}
+        truth = np.array([rank.get(v, np.nan) for v in col.values], dtype=np.float64)
 
     return spearman(inferred, truth)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import pytest
 
 import veloeval as ve
@@ -32,15 +33,109 @@ def test_cbdir_is_scale_invariant(linear, edges):
     base = M.cbdir(linear, label_key="clusters", cluster_edges=edges).value
     scaled = linear.copy()
     scaled.obsm["velocity_umap"] = scaled.obsm["velocity_umap"] * 1e4
-    assert M.cbdir(scaled, label_key="clusters", cluster_edges=edges).value == pytest.approx(
-        base, abs=1e-9
-    )
+    scaled_value = M.cbdir(scaled, label_key="clusters", cluster_edges=edges).value
+    assert scaled_value == pytest.approx(base, abs=1e-9)
 
 
 def test_cbvcoh_coherent_field(linear, edges):
-    assert M.cbvcoh(linear, label_key="clusters", cluster_edges=edges).value == pytest.approx(
-        1.0, abs=1e-6
+    value = M.cbvcoh(linear, label_key="clusters", cluster_edges=edges).value
+    assert value == pytest.approx(1.0, abs=1e-6)
+
+
+@pytest.mark.parametrize("fn", [M.cbdir, M.cbvcoh])
+def test_edge_order_does_not_change_the_answer(fn, ybranch, ybranch_edges):
+    """Regression: per_cell used to be overwritten edge by edge.
+
+    A cell in A is a boundary cell of both A -> B and A -> C, so the last edge
+    written won and the score depended on how cluster_edges happened to be
+    ordered.
+    """
+    forward = fn(ybranch, label_key="clusters", cluster_edges=ybranch_edges)
+    reverse = fn(ybranch, label_key="clusters", cluster_edges=ybranch_edges[::-1])
+
+    assert forward.value == pytest.approx(reverse.value, abs=1e-12)
+    np.testing.assert_allclose(forward.per_cell, reverse.per_cell, equal_nan=True)
+    assert forward.per_group == reverse.per_group
+
+
+@pytest.mark.parametrize("fn", [M.cbdir, M.cbvcoh])
+def test_per_group_has_one_entry_per_edge(fn, ybranch, ybranch_edges):
+    r = fn(ybranch, label_key="clusters", cluster_edges=ybranch_edges)
+    assert set(r.per_group) == {"A -> B", "A -> C"}
+    assert r.value == pytest.approx(np.mean(list(r.per_group.values())))
+
+
+def test_cbdir_matches_hand_computed_edge_scores(ybranch, ybranch_edges):
+    r = M.cbdir(ybranch, label_key="clusters", cluster_edges=ybranch_edges)
+    half = np.sqrt(0.5)
+
+    assert r.per_group["A -> B"] == pytest.approx(np.mean([np.mean([1.0, half]), half]))
+    assert r.per_group["A -> C"] == pytest.approx(np.mean([0.0, np.mean([0.0, -1.0])]))
+    assert r.per_cell[0] == pytest.approx(np.mean([1.0, half]))
+    assert r.per_cell[1] == pytest.approx(np.mean([half, 0.0]))
+    assert r.per_cell[2] == pytest.approx(-0.5)
+    assert np.isnan(r.per_cell[3:]).all(), "only source-cluster cells are scored"
+
+
+def test_cbdir_weights_edges_equally_not_cells(ybranch, ybranch_edges):
+    """value is the mean of the edge scores, not of the cell scores.
+
+    The two differ whenever the edges carry different numbers of boundary
+    cells, which is the normal case: on pancreas one edge holds 63% of them.
+    """
+    r = M.cbdir(ybranch, label_key="clusters", cluster_edges=ybranch_edges)
+    edge_mean = np.mean(list(r.per_group.values()))
+    cell_mean = np.nanmean(r.per_cell)
+
+    assert r.value == pytest.approx(edge_mean)
+    assert r.per_group["A -> B"] > r.per_group["A -> C"]
+    # Not a tautology: the fixture is built so the two aggregations disagree.
+    assert abs(edge_mean - cell_mean) > 1e-6
+
+
+def test_cbdir_per_cell_averages_every_edge_a_cell_joins(ybranch, ybranch_edges):
+    r_both = M.cbdir(ybranch, label_key="clusters", cluster_edges=ybranch_edges)
+    r_b = M.cbdir(ybranch, label_key="clusters", cluster_edges=[["A", "B"]])
+    r_c = M.cbdir(ybranch, label_key="clusters", cluster_edges=[["A", "C"]])
+
+    shared = ~np.isnan(r_b.per_cell) & ~np.isnan(r_c.per_cell)
+    assert shared.sum() > 0, "fixture must have cells on both branches"
+    np.testing.assert_allclose(
+        r_both.per_cell[shared],
+        (r_b.per_cell[shared] + r_c.per_cell[shared]) / 2,
+        atol=1e-12,
     )
+
+
+def test_cbdir_non_source_boundary_matches_hand_computed(ybranch, ybranch_edges):
+    """Every neighbour outside A counts, so B vs C no longer matters.
+
+    Non-A neighbours: cell 0 -> {3, 4}, cell 1 -> {3, 5}, cell 2 -> {5, 6}.
+    """
+    r = M.cbdir(
+        ybranch, label_key="clusters", cluster_edges=ybranch_edges,
+        boundary="non_source",
+    )
+    half = np.sqrt(0.5)
+    expected = np.mean([np.mean([1.0, half]), np.mean([half, 0.0]), np.mean([0.0, -1.0])])
+
+    assert r.per_group == pytest.approx({"A -> B": expected, "A -> C": expected})
+    assert r.value == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("fn", [M.cbdir, M.cbvcoh])
+def test_unknown_boundary_rule_fails_loudly(fn, ybranch, ybranch_edges):
+    r = fn(ybranch, label_key="clusters", cluster_edges=ybranch_edges, boundary="B")
+    assert r.status == "failed"
+    assert "boundary must be one of" in r.detail
+
+
+def test_cbvcoh_ignores_the_direction_of_the_field(ybranch, ybranch_edges):
+    rev = ybranch.copy()
+    rev.obsm["velocity_umap"] = -rev.obsm["velocity_umap"]
+    fwd = M.cbvcoh(ybranch, label_key="clusters", cluster_edges=ybranch_edges)
+    bwd = M.cbvcoh(rev, label_key="clusters", cluster_edges=ybranch_edges)
+    assert bwd.per_group == pytest.approx(fwd.per_group)
 
 
 def test_cto_orders_clusters(linear, edges):
@@ -51,22 +146,140 @@ def test_cto_orders_clusters(linear, edges):
     assert M.cto(linear, label_key="clusters", cluster_edges=edges).value == 0.0
 
 
+def test_cto_is_the_pairwise_fraction(linear, edges, rng):
+    t = rng.integers(0, 5, linear.n_obs).astype(float)
+    t[:3] = np.nan
+    linear.obs["latent_time"] = t
+    labels = linear.obs["clusters"].to_numpy()
+
+    expect = {}
+    for src, tgt in edges:
+        a, b = t[labels == src], t[labels == tgt]
+        a, b = a[~np.isnan(a)], b[~np.isnan(b)]
+        expect[f"{src} -> {tgt}"] = np.mean(a[:, None] < b[None, :])
+
+    r = M.cto(linear, label_key="clusters", cluster_edges=edges)
+    assert r.per_group == pytest.approx(expect)
+    assert r.value == pytest.approx(np.mean(list(expect.values())))
+
+
+def test_cto_counts_ties_as_wrong(linear, edges):
+    linear.obs["latent_time"] = 0.0
+    assert M.cto(linear, label_key="clusters", cluster_edges=edges).value == 0.0
+
+
+def test_cto_stage_key_follows_category_order(linear):
+    n = linear.n_obs
+    linear.obs["day"] = pd.Categorical(
+        np.repeat(["d10", "d2", "d5"], [n // 3, n // 3, n - 2 * (n // 3)]),
+        categories=["d2", "d5", "d10"],
+        ordered=True,
+    )
+    linear.obs["latent_time"] = linear.obs["day"].cat.codes.astype(float)
+    r = M.cto(linear, stage_key="day")
+    assert list(r.per_group) == ["d2 -> d5", "d5 -> d10"]
+    assert r.value == 1.0
+
+
+def test_cto_falls_back_only_when_asked(linear, edges):
+    linear.obs["velocity_pseudotime"] = np.linspace(0, 1, linear.n_obs)
+    kw = dict(label_key="clusters", cluster_edges=edges)
+    assert M.cto(linear, **kw).status == "not_applicable"
+
+    r = M.cto(linear, **kw, fallback_key="velocity_pseudotime")
+    assert r.value == 1.0
+    assert "fallback" in r.detail
+
+    linear.obs["latent_time"] = np.linspace(1, 0, linear.n_obs)
+    r = M.cto(linear, **kw, fallback_key="velocity_pseudotime")
+    assert r.value == 0.0
+    assert "fallback" not in r.detail
+
+
+def test_cto_rejects_two_step_sources(linear, edges):
+    linear.obs["latent_time"] = 0.0
+    linear.obs["day"] = "d0"
+    r = M.cto(
+        linear, label_key="clusters", cluster_edges=edges, stage_key="day"
+    )
+    assert r.status == "failed"
+
+
 # --------------------------------------------------------------------------
 # Coherence
 # --------------------------------------------------------------------------
 
-def test_icvcoh_aligned_vs_random(linear, rng):
-    assert M.icvcoh(linear, label_key="clusters").value == pytest.approx(1.0, abs=1e-6)
+@pytest.mark.parametrize("basis", ["umap", None])
+def test_icvcoh_aligned_vs_random(linear, rng, basis):
+    r = M.icvcoh(linear, label_key="clusters", basis=basis)
+    assert r.value == pytest.approx(1.0, abs=1e-6)
 
     noisy = linear.copy()
     noisy.layers["velocity"] = rng.normal(size=(noisy.n_obs, 2))
-    assert abs(M.icvcoh(noisy, label_key="clusters").value) < 0.4
+    noisy.obsm["velocity_umap"] = rng.normal(size=(noisy.n_obs, 2))
+    assert abs(M.icvcoh(noisy, label_key="clusters", basis=basis).value) < 0.4
+
+
+def test_icvcoh_reads_the_embedding_by_default(linear, rng):
+    only_gene_noisy = linear.copy()
+    only_gene_noisy.layers["velocity"] = rng.normal(size=(linear.n_obs, 2))
+    r_emb = M.icvcoh(only_gene_noisy, label_key="clusters")
+    r_gene = M.icvcoh(only_gene_noisy, label_key="clusters", basis=None)
+    assert r_emb.value == pytest.approx(1.0, abs=1e-6)
+    assert abs(r_gene.value) < 0.4
+
+
+def test_icvcoh_gene_space_refuses_latent_velocity(linear):
+    latent = linear.copy()
+    ve.set_velocity_space(latent, "latent")
+    assert M.icvcoh(latent, label_key="clusters", basis=None).status == "not_applicable"
+    assert M.icvcoh(latent, label_key="clusters").status == "ok"
 
 
 def test_velocity_consistency_needs_no_labels(cycle):
+    pytest.importorskip("scvelo")
     res = M.velocity_consistency(cycle)
     assert res.status == "ok"
     assert res.value > 0.9  # neighbours on a smooth circle are nearly parallel
+
+
+def _scvelo_confidence(adata, indices):
+    """scVelo's own velocity_confidence on the given neighbour table."""
+    import scvelo as scv
+    from scipy.sparse import csr_matrix
+
+    n, k = indices.shape
+    ref = adata.copy()
+    ref.obsp["distances"] = csr_matrix(
+        (np.ones(n * k), indices.ravel(), np.arange(0, n * k + 1, k)), shape=(n, n)
+    )
+    ref.obs["velocity_confidence_transition"] = 0.0
+    scv.tl.velocity_confidence(ref)
+    return ref.obs["velocity_confidence"].to_numpy()
+
+
+def test_velocity_consistency_is_scvelo_velocity_confidence(scattered_genes):
+    pytest.importorskip("scvelo")
+    r = M.velocity_consistency(scattered_genes)
+    expected = _scvelo_confidence(scattered_genes, scattered_genes.obsm[ve.KNN_KEY])
+
+    np.testing.assert_allclose(r.per_cell, expected, atol=1e-12)
+    assert r.value >= 0, "scVelo clips negative confidence to 0"
+
+
+def test_velocity_consistency_drops_self_from_the_legacy_slot(scattered_genes):
+    pytest.importorskip("scvelo")
+    knn = scattered_genes.obsm[ve.KNN_KEY]
+    legacy = scattered_genes.copy()
+    del legacy.obsm[ve.KNN_KEY]
+    legacy.uns["neighbors"] = {
+        "indices": np.column_stack([np.arange(legacy.n_obs), knn])
+    }
+    np.testing.assert_allclose(
+        M.velocity_consistency(legacy).per_cell,
+        M.velocity_consistency(scattered_genes).per_cell,
+        atol=1e-12,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -143,14 +356,46 @@ def test_gamma_corr_not_applicable_for_rate_free_methods(gene_space, rng):
 def test_tsc_monotone_and_reversed(linear):
     linear.obs["latent_time"] = np.linspace(0, 1, linear.n_obs)
     linear.obs["stage"] = np.linspace(0, 10, linear.n_obs)
-    assert M.tsc(linear, time_key="latent_time", true_time_key="stage").value == pytest.approx(
-        1.0, abs=1e-9
-    )
+    forward = M.tsc(linear, time_key="latent_time", true_time_key="stage").value
+    assert forward == pytest.approx(1.0, abs=1e-9)
 
     linear.obs["stage"] = np.linspace(10, 0, linear.n_obs)
-    assert M.tsc(linear, time_key="latent_time", true_time_key="stage").value == pytest.approx(
-        -1.0, abs=1e-9
-    )
+    reversed_tsc = M.tsc(linear, time_key="latent_time", true_time_key="stage").value
+    assert reversed_tsc == pytest.approx(-1.0, abs=1e-9)
+
+
+def _days(n, ordered):
+    labels = np.repeat(["day2", "day5", "day10"], [n // 3, n // 3, n - 2 * (n // 3)])
+    if ordered:
+        return pd.Categorical(labels, categories=["day2", "day5", "day10"], ordered=True)
+    return labels
+
+
+def test_string_stages_need_a_declared_order(linear, edges):
+    linear.obs["latent_time"] = np.linspace(0, 1, linear.n_obs)
+    raw = _days(linear.n_obs, False)
+    for unordered in (raw, pd.Categorical(raw)):
+        linear.obs["day"] = unordered
+        r = M.tsc(linear, time_key="latent_time", true_time_key="day")
+        assert r.status == "failed" and "ordered" in r.detail
+        assert M.cto(linear, stage_key="day").status == "failed"
+
+    linear.obs["day"] = _days(linear.n_obs, True)
+    tsc = M.tsc(linear, time_key="latent_time", true_time_key="day")
+    assert tsc.value > 0.8
+    cto = M.cto(linear, stage_key="day")
+    assert list(cto.per_group) == ["day2 -> day5", "day5 -> day10"]
+    assert cto.value == 1.0
+
+
+def test_numeric_stages_sort_by_value(linear):
+    n = linear.n_obs
+    linear.obs["latent_time"] = np.linspace(0, 1, n)
+    days = np.repeat([2, 5, 10], [n // 3, n // 3, n - 2 * (n // 3)])
+    for col in (days, pd.Categorical(days)):
+        linear.obs["day"] = col
+        assert M.tsc(linear, time_key="latent_time", true_time_key="day").value > 0.8
+        assert list(M.cto(linear, stage_key="day").per_group) == ["2 -> 5", "5 -> 10"]
 
 
 def test_tsc_not_applicable_without_measured_axis(linear):
