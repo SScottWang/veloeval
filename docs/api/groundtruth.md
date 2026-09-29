@@ -28,7 +28,8 @@ incomparable number. **Read the `not_applicable` details, not just the values.**
    veloeval.metrics.gamma_corr
 ```
 
-## The labelling reference
+```{rubric} The labelling reference
+```
 
 veloeval compares against a reference; it does not build one. Derive it from
 the labelling channel with a tool such as dynamo, on the same cells, and hide

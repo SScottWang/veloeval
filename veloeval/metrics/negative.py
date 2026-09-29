@@ -6,7 +6,7 @@ hallucination -- and the conventional accuracy metrics cannot see it, because
 they only ever ask "is the arrow pointing the right way" on data where there is
 a right way.
 
-All four read scVelo's velocity graph (``scvelo.tl.velocity_graph``), which is
+All three read scVelo's velocity graph (``scvelo.tl.velocity_graph``), which is
 not computed for you.
 """
 
@@ -17,7 +17,7 @@ import numpy as np
 from ..access import get_labels, get_velocity_graph
 from ..result import MissingInput, NotApplicable, metric
 
-__all__ = ["sts", "sts_abs", "ees", "nte"]
+__all__ = ["sts", "sts_abs", "ees"]
 
 _REFERENCES = ("all", "groups")
 
@@ -299,71 +299,3 @@ def ees(
         per_cell[c] = np.exp(-np.sum(q * np.log(q)))
     return _on_groups(per_cell, mask)
 
-
-@metric
-def nte(
-    adata,
-    *,
-    vkey: str = "velocity",
-    scale: float = 30.0,
-    label_key: str | None = None,
-    groups: str | list[str] | None = None,
-):
-    r"""Normalised transition entropy (NTE).
-
-    Shannon entropy of each cell's transition distribution over its
-    neighbours, divided by the entropy of a uniform one,
-
-    .. math::
-
-        \mathrm{NTE} = \frac{1}{|G|} \sum_{c \in G}
-            \frac{-\sum_j P_{cj} \log P_{cj}}{\log k_c},
-
-    where :math:`k_c` is the number of neighbours of cell :math:`c`.  The
-    Genome Biology benchmark's code computes it next to :func:`ees` but its
-    paper does not report it.
-
-    Higher is better; range ``[0, 1]``.
-
-    Parameters
-    ----------
-    adata : anndata.AnnData
-        Must carry scVelo's velocity graph ``{vkey}_graph``, and ideally
-        ``{vkey}_graph_neg``.
-    vkey : str, default: "velocity"
-        Velocity key prefix.
-    scale : float, default: 30.0
-        Inverse temperature of the transition matrix; see :func:`ees`.
-    label_key : str, optional
-        Column in ``adata.obs`` holding cluster labels.  Required with *groups*.
-    groups : str or list of str, optional
-        Clusters to score.  ``None`` scores every cell.
-
-    Returns
-    -------
-    MetricResult
-        ``per_cell`` holds each scored cell's normalised entropy and ``nan``
-        elsewhere, including cells with fewer than two neighbours.
-
-    Notes
-    -----
-    Unlike :func:`ees`, the value does not grow with the number of
-    neighbours, but it still moves with *scale*.
-
-    Examples
-    --------
-    .. code-block:: python
-
-        from veloeval import metrics as M
-
-        M.nte(adata)
-        M.nte(adata, label_key="clusters", groups=["Alpha", "Beta"])
-    """
-    mask = _group_mask(adata, label_key, groups)
-
-    per_cell = np.full(adata.n_obs, np.nan)
-    for c, p in enumerate(_transition_rows(adata, vkey, scale)):
-        if not mask[c] or p.size < 2:
-            continue
-        per_cell[c] = -np.sum(p * np.log(p)) / np.log(p.size)
-    return _on_groups(per_cell, mask)

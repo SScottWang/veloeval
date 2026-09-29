@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+import sys
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -265,6 +268,15 @@ def test_velocity_consistency_is_scvelo_velocity_confidence(scattered_genes):
 
     np.testing.assert_allclose(r.per_cell, expected, atol=1e-12)
     assert r.value >= 0, "scVelo clips negative confidence to 0"
+
+
+def test_velocity_consistency_without_scvelo_is_missing_input(
+    scattered_genes, monkeypatch
+):
+    monkeypatch.setitem(sys.modules, "scvelo", None)
+    r = M.velocity_consistency(scattered_genes)
+    assert r.status == "missing_input"
+    assert "scvelo" in r.detail
 
 
 def test_velocity_consistency_drops_self_from_the_legacy_slot(scattered_genes):
@@ -606,12 +618,29 @@ def _with_confidence(adata, conf):
     return a
 
 
-def test_sts_is_scvelos_self_transition(linear, rng):
+def test_sts_follows_the_self_transition_formula(linear, rng):
     conf = rng.uniform(0, 0.9, linear.n_obs)
     r = M.sts(_with_confidence(linear, conf))
     expect = np.clip(np.percentile(conf, 98) - conf, 0, 1)
     assert r.per_cell == pytest.approx(expect)
     assert r.value == pytest.approx(expect.mean())
+
+
+def test_sts_is_scvelos_self_transition(rng):
+    scv = pytest.importorskip("scvelo")
+    import anndata as ad
+    import scanpy as sc
+
+    S = rng.gamma(2, 1, (150, 30))
+    a = ad.AnnData(S.copy())
+    a.layers["Ms"] = S
+    a.layers["velocity"] = rng.normal(size=S.shape)
+    sc.pp.pca(a, n_comps=10)
+    sc.pp.neighbors(a, n_neighbors=15)
+    scv.tl.velocity_graph(a, n_jobs=1, backend="threading")
+
+    expect = a.obs["velocity_self_transition"].to_numpy()
+    np.testing.assert_allclose(M.sts(a).per_cell, expect, atol=1e-6)
 
 
 def test_sts_abs_sees_a_uniform_shift_that_sts_does_not(linear, rng):
@@ -675,13 +704,11 @@ def test_ees_counts_equally_likely_neighbours(linear):
     n = linear.n_obs
     flat = _with_cosines(linear, np.full((n, 8), 0.3))
     assert M.ees(flat).value == pytest.approx(8.0)
-    assert M.nte(flat).value == pytest.approx(1.0)
 
     cos = np.full((n, 8), -0.5)
     cos[:, 0] = 0.9
     sharp = _with_cosines(linear, cos)
     assert M.ees(sharp).value == pytest.approx(1.0)
-    assert M.nte(sharp).value < 0.01
 
 
 def test_ees_is_scvelos_transition_matrix(linear, rng):
@@ -707,7 +734,6 @@ def test_ees_scores_only_the_chosen_groups(linear, rng):
     one = M.ees(a, label_key="clusters", groups="B")
     assert one.value == pytest.approx(everyone[labels == "B"].mean())
     assert np.isnan(one.per_cell[labels != "B"]).all()
-    assert M.nte(a, label_key="clusters", groups=["A"]).status == "ok"
     assert M.ees(a, mass=0).status == "failed"
 
 
@@ -758,7 +784,6 @@ def test_no_metric_ever_raises(gene_space):
         lambda a: M.sts(a),
         lambda a: M.sts_abs(a),
         lambda a: M.ees(a),
-        lambda a: M.nte(a),
         lambda a: M.phase_dir(a),
         lambda a: M.truth_cos(a, gene_space),
         lambda a: M.gamma_corr(a, gene_space),
@@ -773,4 +798,4 @@ def test_direction_covers_every_exported_metric():
 
 
 def test_version_is_importable():
-    assert ve.__version__ == "0.0.1"
+    assert re.fullmatch(r"\d+\.\d+\.\d+(\.dev\d+)?", ve.__version__)

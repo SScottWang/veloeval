@@ -164,8 +164,8 @@ def get_velocity_graph(adata, vkey: str = "velocity", *, negative: bool = False)
     """scVelo's cosine graph as CSR.
 
     ``{vkey}_graph`` holds the positive cosines; with *negative*,
-    ``{vkey}_graph_neg`` holds the negative ones.  scVelo 0.3 writes them to
-    ``uns``; later versions to ``obsp``.
+    ``{vkey}_graph_neg`` holds the negative ones.  scVelo writes them to
+    ``uns``; ``obsp`` is read too, for tools that store them there.
     """
     from scipy.sparse import csr_matrix
 

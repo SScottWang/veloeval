@@ -22,5 +22,5 @@ take a second `AnnData` carrying the labelling-derived reference.
 | --- | --- |
 | `ok` | a real measurement |
 | `not_applicable` | undefined for this method or dataset — information, not a gap |
-| `missing_input` | a required field is absent from the h5ad; `detail` names it |
+| `missing_input` | a required field is absent from the h5ad, or scvelo is not installed; `detail` names it |
 | `failed` | the computation raised; `detail` carries the exception |

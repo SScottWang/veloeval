@@ -33,7 +33,7 @@ from .metrics import DIRECTION
 from .prepare import build_neighbor_indices, prepare, project_velocity
 from .result import MetricResult, MissingInput, NotApplicable, Status
 
-__version__ = "0.0.1"
+__version__ = "0.0.2.dev0"
 
 __all__ = [
     "MetricResult",

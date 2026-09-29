@@ -60,7 +60,6 @@ r.per_cell  # array, nan where the cell could not be scored
 | **negative control** | {func}`~veloeval.metrics.sts` | velocity graph | higher |
 | | {func}`~veloeval.metrics.sts_abs` | velocity graph | higher |
 | | {func}`~veloeval.metrics.ees` | velocity graph | higher |
-| | {func}`~veloeval.metrics.nte` | velocity graph | higher |
 | **ground truth** | {func}`~veloeval.metrics.phase_dir` | FUCCI phase | higher |
 | | {func}`~veloeval.metrics.truth_cos` | labelling reference | higher |
 | | {func}`~veloeval.metrics.gamma_corr` | labelling reference, per-gene rate | higher |
@@ -78,7 +77,7 @@ an absent value has to say why it is absent:
 | --- | --- |
 | `ok` | a real measurement |
 | `not_applicable` | undefined for this method or dataset — information, not a gap |
-| `missing_input` | a required field is absent from the h5ad; `detail` names it |
+| `missing_input` | a required field is absent from the h5ad, or scvelo is not installed; `detail` names it |
 | `failed` | the computation raised; `detail` carries the exception |
 
 Group by status before aggregating across seeds, and do not average a mixed
@@ -106,9 +105,16 @@ Biology* benchmark; `cbvcoh` follows VeloAE; `cto` is the CTO of the
 *Genome Biology* benchmark, a refinement of VeloVAE's Time Accuracy Score (Gu et al.);
 `sts` is scVelo's self-transition probability (Bergen et al., 2020) as used by the
 *Genome Biology* benchmark, and `sts_abs` its variant without the 98th-percentile
-reference; `icvcoh`, `tsc` and `ees` follow the *Genome Biology* benchmark, and `nte` is
-the normalised entropy its code computes next to `ees`. `cbdir`, `cbvcoh` and `icvcoh` all read
-the UMAP-projected velocity by default (VeloAE computed the two coherence
-metrics on `layers`; pass `basis=None` to `icvcoh` for that). They have not
-yet been checked against those implementations on the same data. **Until they
+reference; `icvcoh`, `tsc` and `ees` follow the *Genome Biology* benchmark.
+`cbdir`, `cbvcoh` and `icvcoh` all read the UMAP-projected velocity by default
+(VeloAE computed the two coherence metrics on `layers`; pass `basis=None` to
+`icvcoh` for that).
+
+Checked against scVelo's code, cell by cell, in the tests: `sts` against
+`scvelo.tl.velocity_graph`'s self-transition probability, `velocity_consistency`
+against `scvelo.tl.velocity_confidence`, and the transition matrix `ees` reads
+against `scvelo.tl.transition_matrix`.
+
+Not yet checked against the VeloAE or *Genome Biology* code on the same data:
+`cbdir`, `cbvcoh`, `icvcoh`, `cto`, `tsc`, and the EES formula itself. **Until they
 are, do not present these numbers as reproducing published ones.**

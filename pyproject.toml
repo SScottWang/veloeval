@@ -30,7 +30,8 @@ dependencies = [
 [project.optional-dependencies]
 prepare = ["scvelo>=0.2.5", "scanpy>=1.9"]
 plot = ["matplotlib>=3.5"]
-dev = ["pytest>=7", "ruff>=0.4"]
+# scvelo and scanpy so that the tests comparing against scVelo run, not skip.
+dev = ["pytest>=7", "ruff>=0.4", "scvelo>=0.2.5", "scanpy>=1.9"]
 docs = [
     "sphinx>=7,<9",
     "sphinx-rtd-theme>=2.0",

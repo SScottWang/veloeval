@@ -11,7 +11,7 @@ metrics on this page therefore only mean something when read on a negative
 control — a terminal-state subset, a population of differentiated cells —
 ideally against the same method's score on a paired positive control.
 
-All four read scVelo's velocity graph (`scvelo.tl.velocity_graph`), which is not
+All three read scVelo's velocity graph (`scvelo.tl.velocity_graph`), which is not
 computed for you.
 
 ```{eval-rst}
@@ -21,5 +21,4 @@ computed for you.
    veloeval.metrics.sts
    veloeval.metrics.sts_abs
    veloeval.metrics.ees
-   veloeval.metrics.nte
 ```

@@ -114,7 +114,8 @@ def project_velocity(adata, basis: str = "umap", vkey: str = "velocity", **kwarg
     """
     import scvelo as scv
 
-    if "velocity_graph" not in adata.uns:
+    graph = f"{vkey}_graph"
+    if graph not in adata.uns and graph not in adata.obsp:
         scv.tl.velocity_graph(adata, vkey=vkey, **kwargs)
     scv.tl.velocity_embedding(adata, basis=basis, vkey=vkey)
 

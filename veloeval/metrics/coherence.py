@@ -143,7 +143,8 @@ def velocity_consistency(adata, *, vkey: str = "velocity"):
     sees the same neighbourhoods as the others.  With the default
     :func:`veloeval.build_neighbor_indices` the two are the same graph.
 
-    Requires scvelo (``pip install veloeval[prepare]``).
+    Requires scvelo (``pip install veloeval[prepare]``); without it the
+    status is ``missing_input``.
 
     Examples
     --------
@@ -156,8 +157,12 @@ def velocity_consistency(adata, *, vkey: str = "velocity"):
         res.per_cell  # equals scVelo's obs["velocity_confidence"]
     """
     import anndata as ad
-    import scvelo as scv
     from scipy.sparse import csr_matrix
+
+    try:
+        import scvelo as scv
+    except ImportError:
+        raise MissingInput("scvelo (pip install veloeval[prepare])") from None
 
     indices = get_neighbor_indices(adata)
     get_velocity(adata, vkey)

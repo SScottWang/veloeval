@@ -58,7 +58,6 @@ results = {
     "sts": M.sts(adata),
     "sts_abs": M.sts_abs(adata),
     "ees": M.ees(adata),
-    "nte": M.nte(adata),
     "phase_dir": M.phase_dir(adata, phase_key=ds.get("phase_key", "__absent__")),
 }
 

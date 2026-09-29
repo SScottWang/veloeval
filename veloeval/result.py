@@ -5,7 +5,7 @@ that an absent value carries *why* it is absent:
 
 ``ok``              the value is a real measurement
 ``not_applicable``  this metric does not apply to this method/dataset
-``missing_input``   a required field is absent from ``adata`` (usually upstream)
+``missing_input``   a required field is absent from ``adata``, or scvelo is not installed
 ``failed``          the computation raised
 
 Collapsing these four into ``np.nan`` makes a results table impossible to read
