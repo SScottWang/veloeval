@@ -567,6 +567,20 @@ def test_lineage_fate_against_its_floor(larry):
     assert "trapped" in rev.detail
 
 
+def test_lineage_fate_scores_trapped_progenitors_as_no_prediction(larry):
+    a, X, V = larry
+    V = V.copy()
+    centre = np.array([0.5, 0.0])
+    sink = (a.obs["cell_type"] == "undiff").to_numpy()
+    sink &= np.linalg.norm(X - centre, axis=1) < 0.25
+    V[sink] = centre - X[sink]
+    res = M.lineage_fate(_field(larry, V), **LARRY)
+    assert res.detail.endswith("; 88 trapped, scored as 0.5")
+    assert np.isfinite(res.per_cell).sum() == 319
+    assert (res.per_cell == 0.5).sum() == 88
+    assert res.value < M.lineage_fate(_field(larry), **LARRY).value
+
+
 def test_lineage_fate_leaves_adata_alone(larry):
     a = _field(larry)
     keys = (list(a.obs), list(a.obsm), list(a.uns), list(a.obsp))

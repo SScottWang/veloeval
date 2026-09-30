@@ -458,7 +458,7 @@ def lineage_fate(
     MetricResult
         ``per_cell`` holds :math:`\hat p` for the scored progenitors and
         ``nan`` elsewhere; ``detail`` gives how many progenitors and clones were
-        scored, and how many were dropped as trapped (Notes).
+        scored, and how many were trapped (Notes).
         ``not_applicable`` with a single time point, fewer than 10 scorable
         progenitors, or a constant prediction or truth.
 
@@ -473,13 +473,15 @@ def lineage_fate(
     A field with sinks among the progenitors traps the walk: at ``scale=10``
     a step against the velocity is :math:`e^{20}` times less likely than one
     along it, so escaping takes more steps than double precision resolves and
-    the absorption probabilities no longer sum to 1.  Such progenitors are
-    dropped and counted in ``detail``.  A reversed field is the extreme case:
-    on a synthetic LARRY-like tree every progenitor is trapped and the result
-    is ``not_applicable`` rather than a low score -- itself a sign that the
-    field points the wrong way, to be confirmed with
-    :func:`~veloeval.metrics.cbdir`.  CellRank's solvers refuse the same
-    systems (fate probabilities that do not sum to 1).
+    the absorption probabilities no longer sum to 1.  Such a progenitor gets
+    no prediction, :math:`\hat p = 0.5`, and is still scored -- dropping it
+    instead would reward a field for its sinks, since the progenitors it
+    traps are the ones it gets wrong.  ``detail`` counts them.  A reversed
+    field is the extreme case: on a synthetic LARRY-like tree every
+    progenitor is trapped and the result is ``not_applicable`` rather than a
+    low score -- itself a sign that the field points the wrong way, to be
+    confirmed with :func:`~veloeval.metrics.cbdir`.  CellRank's solvers
+    refuse the same systems (fate probabilities that do not sum to 1).
 
     The truth is a fraction over a few sisters and is noisy when they are few.
     Compare methods only within one dataset and one neighbour graph, and keep
@@ -535,21 +537,21 @@ def lineage_fate(
     B = absorption(T, terminal, [labels == a, labels == b, rest])[scored]
     with np.errstate(invalid="ignore", divide="ignore"):
         predicted = B[:, 0] / (B[:, 0] + B[:, 1])
-    resolved = np.abs(B.sum(axis=1) - 1) <= _ABSORBED_TOL
-    trapped = int((np.isfinite(B.sum(axis=1)) & ~resolved).sum())
-    predicted[~resolved] = np.nan
+    total = B.sum(axis=1)
+    trapped = np.isfinite(total) & (np.abs(total - 1) > _ABSORBED_TOL)
+    predicted[trapped] = 0.5
+    n_trapped = int(trapped.sum())
 
     good = np.isfinite(predicted)
     if good.sum() < 10:
-        why = (
-            f"; the walk from {trapped} is trapped among progenitors, "
-            "i.e. the field has sinks there"
-            if trapped
-            else ""
-        )
         raise NotApplicable(
             f"{int(good.sum())} of {len(scored)} progenitors at {stages[0]} with "
-            f">= {min_sisters} '{a}'/'{b}' sisters have a usable prediction{why}"
+            f">= {min_sisters} '{a}'/'{b}' sisters have a finite prediction"
+        )
+    if n_trapped == good.sum():
+        raise NotApplicable(
+            f"the walk from all {n_trapped} progenitors is trapped among "
+            "progenitors, i.e. the field has sinks there"
         )
     if np.ptp(predicted[good]) == 0 or np.ptp(observed[good]) == 0:
         raise NotApplicable("predicted or observed fate bias is constant")
@@ -561,7 +563,7 @@ def lineage_fate(
         name="lineage_fate",
         value=float(np.corrcoef(predicted[good], observed[good])[0, 1]),
         detail=f"{int(good.sum())} progenitors at {stages[0]} from {n_clones} clones"
-        + (f"; {trapped} trapped, dropped" if trapped else ""),
+        + (f"; {n_trapped} trapped, scored as 0.5" if n_trapped else ""),
         per_cell=per_cell,
     )
 
