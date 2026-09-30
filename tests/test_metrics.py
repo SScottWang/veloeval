@@ -575,9 +575,10 @@ def test_lineage_fate_scores_trapped_progenitors_as_no_prediction(larry):
     sink &= np.linalg.norm(X - centre, axis=1) < 0.25
     V[sink] = centre - X[sink]
     res = M.lineage_fate(_field(larry, V), **LARRY)
-    assert res.detail.endswith("; 88 trapped, scored as 0.5")
+    trapped = int(re.search(r"; (\d+) trapped, scored as 0\.5$", res.detail).group(1))
+    assert 50 < trapped < 150  # which rows cross the tolerance depends on the LU backend
     assert np.isfinite(res.per_cell).sum() == 319
-    assert (res.per_cell == 0.5).sum() == 88
+    assert (res.per_cell == 0.5).sum() == trapped
     assert res.value < M.lineage_fate(_field(larry), **LARRY).value
 
 

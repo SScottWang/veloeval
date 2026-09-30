@@ -460,7 +460,8 @@ def lineage_fate(
         ``nan`` elsewhere; ``detail`` gives how many progenitors and clones were
         scored, and how many were trapped (Notes).
         ``not_applicable`` with a single time point, fewer than 10 scorable
-        progenitors, or a constant prediction or truth.
+        progenitors or fewer than 10 that are not trapped, or a constant
+        prediction or truth.
 
     Notes
     -----
@@ -548,10 +549,10 @@ def lineage_fate(
             f"{int(good.sum())} of {len(scored)} progenitors at {stages[0]} with "
             f">= {min_sisters} '{a}'/'{b}' sisters have a finite prediction"
         )
-    if n_trapped == good.sum():
+    if good.sum() - n_trapped < 10:
         raise NotApplicable(
-            f"the walk from all {n_trapped} progenitors is trapped among "
-            "progenitors, i.e. the field has sinks there"
+            f"the walk from {n_trapped} of {int(good.sum())} progenitors is trapped "
+            "among progenitors, i.e. the field has sinks there"
         )
     if np.ptp(predicted[good]) == 0 or np.ptp(observed[good]) == 0:
         raise NotApplicable("predicted or observed fate bias is constant")
