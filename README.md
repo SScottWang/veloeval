@@ -11,12 +11,12 @@ belong to the VeloBench pipeline, which changes far more often than a metric
 definition should.
 
 ```bash
-pip install git+https://github.com/SScottWang/veloeval.git@v0.0.2
+pip install git+https://github.com/SScottWang/veloeval.git@v0.0.3
 ```
 
 `prepare()` and `velocity_consistency` (which calls scVelo's own
 `velocity_confidence`) also need scvelo and scanpy: install with the `prepare`
-extra, `pip install "veloeval[prepare] @ git+https://github.com/SScottWang/veloeval.git@v0.0.2"`.
+extra, `pip install "veloeval[prepare] @ git+https://github.com/SScottWang/veloeval.git@v0.0.3"`.
 
 ## Use
 
@@ -107,7 +107,7 @@ the same on every push and pull request.
 
 `veloeval.__version__` goes into every results row, so one version must mean one
 implementation. After tagging a release `vX.Y.Z`, bump `main` straight to the
-next `.dev0` (`0.0.2` is tagged, so `main` is `0.0.3.dev0`).
+next `.dev0` (`0.0.3` is tagged, so `main` is `0.0.4.dev0`).
 
 ## Docs
 
