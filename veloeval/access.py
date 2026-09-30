@@ -54,7 +54,7 @@ SPATIAL_KNN_KEY = "veloeval_spatial_knn"
 #: Where a method's velocity vectors live.
 #:
 #: ``gene``      one component per gene (scVelo, velocyto, veloVI, ...)
-#: ``latent``    a learned low-dimensional space (VeloAE, VeloVAE, ...)
+#: ``latent``    a learned low-dimensional space (VeloAE, ...)
 #: ``embedding`` directly in a 2-D visualisation basis
 #: ``scalar``    a single signed rate per cell (VeloCycle angular velocity)
 VeloSpace = str

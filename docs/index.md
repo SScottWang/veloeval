@@ -58,6 +58,7 @@ r.per_cell  # array, nan where the cell could not be scored
 | | {func}`~veloeval.metrics.velocity_consistency` | — | higher |
 | | {func}`~veloeval.metrics.spatial_consistency` | spatial coordinates | higher |
 | | {func}`~veloeval.metrics.time_morans_i` | inferred time; spatial coordinates | higher |
+| | {func}`~veloeval.metrics.field_constancy` | — | none (diagnostic) |
 | **temporal** | {func}`~veloeval.metrics.tsc` | measured linear time axis | higher |
 | | {func}`~veloeval.metrics.phase_corr` | inferred time; FUCCI phase | higher |
 | **negative control** | {func}`~veloeval.metrics.sts` | velocity graph | higher |
@@ -116,7 +117,8 @@ Biology* benchmark; `cbvcoh` follows VeloAE; `cto` is the CTO of the
 reference; `icvcoh`, `tsc` and `ees` follow the *Genome Biology* benchmark.
 `cbdir`, `cbvcoh` and `icvcoh` all read the UMAP-projected velocity by default
 (VeloAE computed the two coherence metrics on `layers`; pass `basis=None` to
-`icvcoh` for that). `phase_corr` is Fisher & Lee's circular correlation
+`icvcoh` for that, and to `cbdir` for the gene-space cosines of the velocity
+graph). `phase_corr` is Fisher & Lee's circular correlation
 (*Biometrika* 1983) on uniform scores; `spatial_consistency` and `time_morans_i`
 follow TopoVelo (Gu et al., *Nat Biotechnol* 2025), as used by Huang et al.
 (bioRxiv 2026); `agreement` is the A2 of CZ Biohub (bioRxiv 2024), as used by the

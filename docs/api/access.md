@@ -14,8 +14,8 @@ guesses.
 
 | space | methods | what still applies |
 | --- | --- | --- |
-| `gene` | scVelo, velocyto, veloVI, cellDancer, … | everything |
-| `latent` | VeloAE, VeloVAE, … | embedding-space metrics; not `truth_cos` / `gamma_corr` |
+| `gene` | scVelo, velocyto, veloVI, cellDancer, VeloVAE, … | everything |
+| `latent` | VeloAE, … | embedding-space metrics; not `truth_cos` / `gamma_corr` |
 | `embedding` | projected-only outputs | embedding-space metrics |
 | `scalar` | VeloCycle (angular velocity) | none of the vector metrics |
 

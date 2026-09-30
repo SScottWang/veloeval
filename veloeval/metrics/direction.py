@@ -6,7 +6,8 @@ them yields ``not_applicable``, which is a property of the dataset, not a
 failure of the method.
 
 CBDir is computed in a shared low-dimensional embedding, as in VeloAE (Qiao &
-Huang, PNAS 2021) and the Genome Biology benchmark (2026).  CBVCoh uses the same
+Huang, PNAS 2021) and the Genome Biology benchmark (2026), or with
+``basis=None`` on the gene-space cosines of scVelo's velocity graph.  CBVCoh uses the same
 embedding so that methods whose velocity lives in different native spaces --
 including latent-space ones -- stay comparable; VeloAE itself computed it on
 ``layers``.  The basis must be identical across every method in a comparison.
@@ -23,6 +24,8 @@ from ..access import (
     get_neighbor_indices,
     get_stages,
     get_velocity_embedding,
+    get_velocity_graph,
+    velocity_space,
 )
 from ..result import MetricResult, NotApplicable, metric
 
@@ -73,6 +76,33 @@ def _boundary_groups(labels, cluster_edges, indices, boundary="target"):
         )
 
 
+def _graph_cosines(adata, vkey):
+    """Scorer reading the velocity graph's cosine for each (cell, neighbour) pair.
+
+    ``nan`` for a pair the graph never scored.  Also returns a running count of
+    pairs looked up and of pairs absent.
+    """
+    G = (
+        get_velocity_graph(adata, vkey) + get_velocity_graph(adata, vkey, negative=True)
+    ).tocsr()
+    G.sort_indices()
+    seen = {"pairs": 0, "absent": 0}
+
+    def score(i, nbrs):
+        cols = G.indices[G.indptr[i] : G.indptr[i + 1]]
+        vals = G.data[G.indptr[i] : G.indptr[i + 1]]
+        out = np.full(len(nbrs), np.nan)
+        if cols.size:
+            at = np.minimum(np.searchsorted(cols, nbrs), cols.size - 1)
+            found = cols[at] == nbrs
+            out[found] = vals[at[found]]
+        seen["pairs"] += len(nbrs)
+        seen["absent"] += int(np.isnan(out).sum())
+        return out
+
+    return score, seen
+
+
 def _aggregate_over_edges(labels, cluster_edges, indices, n_obs, score, boundary):
     """Average *score* over neighbours, then over cells per edge, then over edges.
 
@@ -113,11 +143,11 @@ def cbdir(
     *,
     label_key: str,
     cluster_edges,
-    basis: str = "umap",
+    basis: str | None = "umap",
     vkey: str = "velocity",
     boundary: str = "target",
 ):
-    """Cross-boundary direction correctness.
+    r"""Cross-boundary direction correctness.
 
     For each edge ``A -> B`` and each cell ``i`` in ``A``, take the cosine
     between ``i``'s velocity and the displacement towards each kNN neighbour
@@ -131,8 +161,10 @@ def cbdir(
     Parameters
     ----------
     adata : anndata.AnnData
-        Must carry ``obsm['X_{basis}']``, ``obsm['{vkey}_{basis}']`` and
-        ``obsm['veloeval_knn']`` -- see :func:`veloeval.prepare`.
+        Must carry ``obsm['veloeval_knn']`` and, with a *basis*,
+        ``obsm['X_{basis}']`` and ``obsm['{vkey}_{basis}']``; with
+        ``basis=None``, scVelo's ``{vkey}_graph`` and ``{vkey}_graph_neg`` --
+        see :func:`veloeval.prepare`.
     label_key : str
         Column in ``adata.obs`` holding cell-type labels.  Its values must use
         the same spelling as *cluster_edges*.
@@ -141,9 +173,11 @@ def cbdir(
         ``[["Ductal", "Ngn3 low EP"], ["Ngn3 low EP", "Ngn3 high EP"]]``.
         ``None`` yields ``not_applicable``: a dataset without curated edges
         cannot be scored this way, which is a fact about the dataset.
-    basis : str, default: "umap"
-        Embedding both the positions and the velocity are read in.  Must be
-        the same for every method in a comparison.
+    basis : str or None, default: "umap"
+        Embedding both the positions and the velocity are read in.  ``None``
+        reads the cosine of each (cell, neighbour) pair from the velocity graph
+        instead, in gene space -- see Notes.  Must be the same for every method
+        in a comparison.
     vkey : str, default: "velocity"
         Velocity key prefix.
     boundary : {"target", "non_source"}, default: "target"
@@ -161,14 +195,29 @@ def cbdir(
         that edge's score; ``per_cell`` holds each cell's mean over the edges it
         takes part in, ``nan`` where it had no cross-boundary neighbour.
         ``status`` is ``not_applicable`` without *cluster_edges* or when no cell
-        has a neighbour across any edge.
+        has a neighbour across any edge; with ``basis=None`` also outside gene
+        space, or when more than 10% of the boundary pairs are missing from the
+        velocity graph, which then was built on other neighbours than
+        ``obsm['veloeval_knn']``.
 
     Notes
     -----
-    Computed in the embedding rather than gene space, as in VeloAE (Qiao &
-    Huang, *PNAS* 2021) and the Genome Biology benchmark (2026): in gene space
-    the displacement is dominated by genes unrelated to the transition and the
-    cosine sits near 0 for every method.
+    By default computed in the embedding, as in VeloAE (Qiao & Huang, *PNAS*
+    2021) and the Genome Biology benchmark (2026).
+
+    ``basis=None`` removes the dependence on the embedding.  The cosine is
+    scVelo's: between the neighbour's displacement in ``Ms`` and the velocity,
+    each first centred across genes -- a Pearson correlation.  The embedding
+    smooths out most of the noise in single-neighbour displacements, gene
+    space does not, so values run far lower: on scVelo's pancreas data 0.19
+    (dynamical), 0.09 (deterministic) and 0.03 (shuffled control), against
+    0.52, 0.50 and 0.18 in UMAP.  Compare methods only within one basis;
+    record the basis with the result and never pool the two.  Reversing the
+    field flips the sign exactly, which the UMAP projection, through
+    :math:`\exp(10\cos)`, does not.  Not invariant to rescaling single genes.
+    Only gene-space velocities are scored: a latent-space method's graph lives
+    in its own space.  For the methods to share one set of neighbours and one
+    ``Ms``, build their graphs with ``prepare(..., reference=ref)``.
 
     Examples
     --------
@@ -190,6 +239,32 @@ def cbdir(
     """
     labels = get_labels(adata, label_key)
     indices = get_neighbor_indices(adata)
+    if basis is None:
+        space = velocity_space(adata)
+        if space != "gene":
+            raise NotApplicable(
+                f"basis=None reads a gene-space velocity graph; velocity lives in "
+                f"{space!r} space"
+            )
+        score, seen = _graph_cosines(adata, vkey)
+        value, per_cell, per_group = _aggregate_over_edges(
+            labels, cluster_edges, indices, adata.n_obs, score, boundary
+        )
+        if seen["absent"] > 0.1 * seen["pairs"]:
+            raise NotApplicable(
+                f"{seen['absent']} of {seen['pairs']} boundary pairs are not in the "
+                "velocity graph, which was built on other neighbours than "
+                "obsm['veloeval_knn']; use prepare(reference=...)"
+            )
+        return MetricResult(
+            name="cbdir",
+            value=value,
+            per_cell=per_cell,
+            per_group=per_group,
+            detail=f"gene space; {seen['absent']} of {seen['pairs']} boundary pairs "
+            "absent from the velocity graph",
+        )
+
     X = get_embedding(adata, basis)
     V = get_velocity_embedding(adata, basis, vkey)
 

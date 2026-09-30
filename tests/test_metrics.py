@@ -1328,3 +1328,272 @@ def test_agreement_without_scvelo_is_missing_input(cells, monkeypatch):
     monkeypatch.setitem(sys.modules, "scvelo", None)
     res = M.agreement({"a": _run(*cells)})
     assert res["a"].status == "missing_input"
+
+
+# --------------------------------------------------------------------------
+# Gene-space direction, field constancy, reference mode
+# --------------------------------------------------------------------------
+
+def _curve(rng, n=300, g=40, arc=0.0, noise=0.0):
+    """Cells along a curve in gene space, velocity its tangent, three clusters in t.
+
+    ``arc=0`` is a straight line; otherwise the curve turns by *arc* radians
+    in a plane spanned by two random gene directions.
+    """
+    t = np.sort(rng.uniform(0, 1, n))
+    d1, d2 = np.linalg.qr(rng.normal(size=(g, 2)))[0].T
+    if arc == 0:
+        X = np.outer(t, d1)
+        V = np.tile(d1, (n, 1))
+    else:
+        a = arc * t
+        X = (np.outer(np.sin(a), d1) + np.outer(1 - np.cos(a), d2)) / arc
+        V = np.outer(np.cos(a), d1) + np.outer(np.sin(a), d2)
+    X = X + 3.0 + noise * rng.normal(size=X.shape)
+    labels = np.array(["A", "B", "C"])[np.minimum((t * 3).astype(int), 2)]
+    return t, X.astype(np.float32), V, labels
+
+
+def _gene_run(X, V, labels, n_neighbors=15):
+    """A method with a gene-space velocity and scVelo's own graph on its ``Ms``."""
+    import anndata as ad
+    import scanpy as sc
+    import scvelo as scv
+
+    n, g = X.shape
+    a = ad.AnnData(
+        X=X.copy(),
+        obs=pd.DataFrame({"clusters": pd.Categorical(labels)},
+                         index=[f"c{i}" for i in range(n)]),
+        var=pd.DataFrame(index=[f"g{j}" for j in range(g)]),
+    )
+    a.layers["Ms"] = X.copy()
+    a.layers["velocity"] = np.asarray(V, dtype=np.float64)
+    sc.pp.neighbors(a, n_neighbors=n_neighbors, use_rep="X")
+    scv.tl.velocity_graph(a, sqrt_transform=False, n_jobs=1)
+    ve.build_neighbor_indices(a)
+    return a
+
+
+EDGES3 = [["A", "B"], ["B", "C"]]
+
+
+def test_cbdir_gene_space_straight_line_is_one(rng):
+    pytest.importorskip("scvelo")
+    _, X, V, lab = _curve(rng)
+    res = M.cbdir(_gene_run(X, V, lab), label_key="clusters",
+                  cluster_edges=EDGES3, basis=None)
+    assert res.status == "ok"
+    assert res.value == pytest.approx(1.0, abs=1e-5)
+    assert res.detail.startswith("gene space; 0 of ")
+
+
+def test_cbdir_gene_space_arc_reverse_and_scale(rng):
+    pytest.importorskip("scvelo")
+    _, X, V, lab = _curve(rng, arc=np.pi / 2)
+    arc = M.cbdir(_gene_run(X, V, lab), label_key="clusters",
+                  cluster_edges=EDGES3, basis=None).value
+    assert arc > 0.99
+
+    _, X, V, lab = _curve(np.random.default_rng(1), arc=np.pi / 2, noise=0.002)
+    kw = dict(label_key="clusters", cluster_edges=EDGES3, basis=None)
+    noisy = M.cbdir(_gene_run(X, V, lab), **kw).value
+    assert 0.2 < noisy < 0.95
+    rev = M.cbdir(_gene_run(X, -V, lab), **kw).value
+    assert rev == pytest.approx(-noisy, abs=1e-6)
+    big = M.cbdir(_gene_run(X, 1000 * V, lab), **kw).value
+    assert big == pytest.approx(noisy, abs=1e-5)
+
+    rand = M.cbdir(_gene_run(X, rng.normal(size=V.shape), lab), **kw).value
+    assert abs(rand) < 0.1
+
+
+def test_cbdir_gene_space_statuses(rng):
+    pytest.importorskip("scvelo")
+    _, X, V, lab = _curve(rng)
+    a = _gene_run(X, V, lab)
+    kw = dict(label_key="clusters", cluster_edges=EDGES3, basis=None)
+
+    from tests.conftest import knn_indices
+
+    other = a.copy()
+    elsewhere = np.random.default_rng(5).normal(size=(300, 2))
+    other.obsm[ve.KNN_KEY] = knn_indices(elsewhere, 15)
+    res = M.cbdir(other, **kw)
+    assert res.status == "not_applicable" and "reference" in res.detail
+
+    latent = a.copy()
+    ve.set_velocity_space(latent, "latent")
+    assert M.cbdir(latent, **kw).status == "not_applicable"
+
+
+def _constancy(V):
+    import anndata as ad
+
+    a = ad.AnnData(X=np.zeros(np.shape(V), np.float32))
+    a.layers["velocity"] = np.asarray(V, dtype=np.float64)
+    return M.field_constancy(a)
+
+
+def test_field_constancy(rng):
+    n, g = 800, 40
+    v = rng.normal(size=g)
+    assert np.isclose(_constancy(np.tile(v, (n, 1))).value, 1.0)
+    assert _constancy(rng.normal(size=(n, g))).value < 3 / np.sqrt(n)
+
+    _, _, V, _ = _curve(rng, n=n, g=g, arc=np.pi / 2)
+    arc = _constancy(V)
+    assert 0.85 < arc.value < 0.95
+    for W in (-V, 7 * V):
+        assert _constancy(W).value == pytest.approx(arc.value, abs=1e-12)
+    assert np.nanmax(arc.per_cell) <= 1 + 1e-12
+
+    half = np.vstack([np.tile(v, (n // 2, 1)), np.tile(-v, (n // 2, 1))])
+    assert _constancy(half).value == pytest.approx(0.0, abs=1e-12)
+
+    still = np.zeros((n, g))
+    still[0] = v
+    assert _constancy(still).status == "not_applicable"
+
+
+@pytest.fixture
+def reference(rng):
+    """A shared reference: PCA, UMAP, scanpy neighbours and Ms for 300 cells."""
+    pytest.importorskip("scvelo")
+    import anndata as ad
+    import scanpy as sc
+
+    _, X, V, lab = _curve(rng, arc=np.pi / 2, noise=0.01)
+    ref = ad.AnnData(
+        X=X.copy(),
+        obs=pd.DataFrame({"clusters": pd.Categorical(lab)},
+                         index=[f"c{i}" for i in range(len(X))]),
+        var=pd.DataFrame(index=[f"g{j}" for j in range(X.shape[1])]),
+    )
+    ref.layers["Ms"] = X.copy()
+    Xc = X - X.mean(0)
+    pcs = np.linalg.svd(Xc, full_matrices=False)[2][:10]
+    ref.obsm["X_pca"] = (Xc @ pcs.T).astype(np.float32)
+    ref.obsm["X_umap"] = ref.obsm["X_pca"][:, :2].astype(np.float64)
+    sc.pp.neighbors(ref, n_neighbors=15, use_rep="X_pca")
+    return ref, X, V
+
+
+def _method(ref, X, V, seed, n_neighbors):
+    """Same velocity, but the method's own neighbours, UMAP, Ms and velocity graph."""
+    r = np.random.default_rng(seed)
+    a = _gene_run(X + 0.05 * r.normal(size=X.shape).astype(np.float32), V,
+                  ref.obs["clusters"].to_numpy(), n_neighbors=n_neighbors)
+    a.obsm["X_umap"] = r.normal(size=(a.n_obs, 2))
+    a.obsm["velocity_umap"] = r.normal(size=(a.n_obs, 2))
+    return a
+
+
+def _graph(a, neg=False):
+    from veloeval.access import get_velocity_graph
+
+    return get_velocity_graph(a, negative=neg).toarray()
+
+
+def test_reference_mode_puts_methods_on_one_footing(reference):
+    ref, X, V = reference
+    m1, m2 = _method(ref, X, V, 1, 8), _method(ref, X, V, 2, 25)
+    assert not np.array_equal(_graph(m1), _graph(m2))
+    for m in (m1, m2):
+        ve.prepare(m, reference=ref)
+    np.testing.assert_array_equal(m1.obsm[ve.KNN_KEY], m2.obsm[ve.KNN_KEY])
+    np.testing.assert_array_equal(_graph(m1), _graph(m2))
+    np.testing.assert_array_equal(_graph(m1, True), _graph(m2, True))
+    np.testing.assert_array_equal(m1.obsm["velocity_umap"], m2.obsm["velocity_umap"])
+    np.testing.assert_array_equal(m1.obsm["X_umap"], ref.obsm["X_umap"])
+
+    rec = m1.uns["veloeval"]["prepared"]
+    assert rec["neighbors"]["source"] == "reference"
+    assert rec["reference"] == {"n_obs": 300, "dropped": 0, "graph": "copied"}
+    assert rec["velocity_graph"]["n_genes"] == 40
+    assert "veloeval_Ms" not in m1.layers
+
+
+def test_reference_mode_is_order_free(reference):
+    ref, X, V = reference
+    m = _method(ref, X, V, 1, 8)
+    order = np.random.default_rng(3).permutation(m.n_obs)
+    shuffled = m[order].copy()
+    ve.prepare(shuffled, reference=ref)
+    base = ref.copy()
+    ve.build_neighbor_indices(base)
+    names = lambda a: a.obs_names.to_numpy()[a.obsm[ve.KNN_KEY]]  # noqa: E731
+    got = pd.DataFrame(names(shuffled), index=shuffled.obs_names).loc[ref.obs_names]
+    np.testing.assert_array_equal(got.to_numpy(), names(base))
+
+
+def test_reference_mode_rebuilds_the_graph_when_cells_are_dropped(reference):
+    import scanpy as sc
+
+    ref, X, V = reference
+    keep = np.sort(np.random.default_rng(4).choice(300, 270, replace=False))
+    m = _method(ref, X, V, 1, 8)[keep].copy()
+    ve.prepare(m, reference=ref)
+    knn = m.obsm[ve.KNN_KEY]
+    assert knn.shape == (270, 14) and knn.max() < 270
+    assert m.uns["veloeval"]["prepared"]["reference"]["dropped"] == 30
+
+    sub = ref[keep].copy()
+    p = sub.uns["neighbors"]["params"]
+    sc.pp.neighbors(
+        sub, n_neighbors=p["n_neighbors"], use_rep="X_pca", method=p["method"],
+        metric=p["metric"], random_state=p["random_state"],
+    )
+    np.testing.assert_array_equal(knn, ve.build_neighbor_indices(sub))
+
+
+def test_reference_mode_genes_and_reversal(reference):
+    import anndata as ad
+    import scvelo as scv
+
+    ref, X, V = reference
+    m = _method(ref, X, V, 1, 8)
+    extra = ad.AnnData(
+        X=np.ones((300, 5), np.float32), obs=m.obs[[]],
+        var=pd.DataFrame(index=[f"x{j}" for j in range(5)]),
+    )
+    extra.layers["Ms"] = extra.X.copy()
+    extra.layers["velocity"] = np.ones((300, 5))
+    wide = ad.concat([m[:, 10:], extra], axis=1, merge="first")
+    wide.obs = m.obs.copy()
+    wide.obsp = m.obsp
+    wide.uns = dict(m.uns)
+    wide.obsm = m.obsm.copy()
+    wide.layers["velocity"][:, 0] = np.nan
+    ve.prepare(wide, reference=ref)
+    assert wide.uns["veloeval"]["prepared"]["velocity_graph"]["n_genes"] == 29
+
+    genes = [f"g{j}" for j in range(11, 40)]
+    direct = ref[:, genes].copy()
+    direct.layers["velocity"] = V[:, 11:]
+    scv.tl.velocity_graph(direct, xkey="Ms", sqrt_transform=False, n_jobs=1)
+    np.testing.assert_allclose(_graph(wide), _graph(direct), atol=1e-6)
+
+    rev = _method(ref, X, -V, 1, 8)
+    fwd = _method(ref, X, V, 1, 8)
+    for m_ in (rev, fwd):
+        ve.prepare(m_, reference=ref)
+    np.testing.assert_array_equal(_graph(rev), -_graph(fwd, True))
+    np.testing.assert_array_equal(_graph(rev, True), -_graph(fwd))
+
+
+def test_reference_mode_errors(reference):
+    ref, X, V = reference
+    m = _method(ref, X, V, 1, 8)
+    stranger = m.copy()
+    stranger.obs_names = ["zz"] + list(stranger.obs_names[1:])
+    with pytest.raises(ValueError, match="not in the reference"):
+        ve.prepare(stranger, reference=ref)
+
+    no_umap = ref.copy()
+    del no_umap.obsm["X_umap"]
+    with pytest.raises(ValueError, match="X_umap"):
+        ve.prepare(m.copy(), reference=no_umap)
+
+    with pytest.raises(ValueError, match="overwrite_neighbors"):
+        ve.prepare(m.copy(), reference=ref, overwrite_neighbors=True)

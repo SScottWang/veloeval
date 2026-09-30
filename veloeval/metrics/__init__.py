@@ -8,6 +8,7 @@ returns one result per run; everything else is one run in, one result out.
 
 from .agreement import agreement
 from .coherence import (
+    field_constancy,
     icvcoh,
     spatial_consistency,
     time_morans_i,
@@ -20,6 +21,7 @@ from .temporal import phase_corr, tsc
 
 #: Metric name -> ``"higher"`` / ``"lower"`` / ``"zero"``.  What "better" means
 #: for each metric, for ranking and for colour scales in a plotting layer.
+#: ``None`` marks a diagnostic that has no better direction and is not ranked.
 DIRECTION = {
     "cbdir": "higher",
     "cbvcoh": "higher",
@@ -28,6 +30,7 @@ DIRECTION = {
     "velocity_consistency": "higher",
     "spatial_consistency": "higher",
     "time_morans_i": "higher",
+    "field_constancy": None,
     "tsc": "higher",
     "phase_corr": "higher",
     "sts": "higher",
@@ -49,6 +52,7 @@ __all__ = [
     "velocity_consistency",
     "spatial_consistency",
     "time_morans_i",
+    "field_constancy",
     "tsc",
     "phase_corr",
     "sts",

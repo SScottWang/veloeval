@@ -15,7 +15,7 @@ import veloeval as ve
 
 ve.prepare(
     adata,
-    space="gene",       # "latent" for VeloAE / VeloVAE, "scalar" for VeloCycle
+    space="gene",       # "latent" for VeloAE, "scalar" for VeloCycle
     basis="umap",
     n_neighbors=30,
 )
@@ -32,6 +32,19 @@ instead of a meaningless cosine.
 `prepare` never raises on a failed projection: it records the error and lets the
 metrics report `missing_input` downstream, so one method failing to project does
 not take the run down.
+
+## Or in a separate evaluation step
+
+To put every method on one shared neighbourhood, embedding and `Ms`, call it
+instead on each method's output with a reference built once per dataset — see
+the reference mode in {doc}`api/prepare`. The method's environment then
+needs no veloeval:
+
+```python
+ref = ad.read_h5ad(reference_path)
+adata = ad.read_h5ad(velocity_path)
+ve.prepare(adata, space="gene", basis="umap", reference=ref)
+```
 
 ## In the metrics rule
 

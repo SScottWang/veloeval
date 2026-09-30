@@ -20,7 +20,13 @@ from ..access import (
 )
 from ..result import MetricResult, MissingInput, NotApplicable, metric
 
-__all__ = ["icvcoh", "velocity_consistency", "spatial_consistency", "time_morans_i"]
+__all__ = [
+    "icvcoh",
+    "velocity_consistency",
+    "spatial_consistency",
+    "time_morans_i",
+    "field_constancy",
+]
 
 
 @metric
@@ -342,3 +348,73 @@ def time_morans_i(adata, *, time_key: str = "latent_time"):
         value=float(moran),
         detail=f"expected {-1 / (n - 1):.3f} without spatial structure",
     )
+
+
+@metric
+def field_constancy(adata, *, vkey: str = "velocity"):
+    r"""How close the velocity field is to one constant direction.
+
+    The mean resultant length of the unit velocities, over cells whose
+    velocity is nonzero:
+
+    .. math::
+
+        \mathrm{FC} = \Bigl\lVert \frac1n \sum_i \mathbf u_i \Bigr\rVert
+        = \frac1n \sum_i \cos(\mathbf u_i, \bar{\mathbf u}),
+        \qquad \mathbf u_i = \mathbf v_i / \lVert \mathbf v_i \rVert
+
+    Range ``[0, 1]``: 1 for a constant field, about :math:`1/\sqrt n` for an
+    isotropic random one.  A diagnostic, not ranked: ``DIRECTION`` maps it to
+    ``None``.
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        Must carry a gene-space velocity in ``layers[vkey]``; genes with any
+        NaN are dropped.
+    vkey : str, default: "velocity"
+        Velocity key prefix.
+
+    Returns
+    -------
+    MetricResult
+        ``per_cell`` is each cell's cosine with the mean direction, ``nan``
+        for cells with zero velocity.  ``not_applicable`` with fewer than two
+        nonzero velocities or outside gene space.
+
+    Notes
+    -----
+    High is neither good nor bad: a linear trajectory is legitimately
+    constant, a correct field on a branching one is less so.  Read it across
+    methods on one dataset.  A method whose constancy stands well above the
+    others' while its :func:`icvcoh` and :func:`velocity_consistency` are also
+    high has probably collapsed towards a constant vector -- a decoder bias,
+    say -- and those two coherence scores are then no evidence of quality.
+
+    Unit vectors first, so a few cells with large velocities do not set the
+    mean direction.  Unchanged by rescaling the field or reversing it, so it
+    says nothing about direction.  Not invariant to rescaling single genes: a
+    method that outputs velocity on standardised data scores differently.
+
+    Examples
+    --------
+    .. code-block:: python
+
+        from veloeval import metrics as M
+
+        res = M.field_constancy(adata)
+        res.value     # 1 = every cell points the same way
+        res.per_cell  # each cell's cosine with the mean direction
+    """
+    V = get_velocity(adata, vkey)
+    norm = np.linalg.norm(V, axis=1)
+    moving = norm > 0
+    if moving.sum() < 2:
+        raise NotApplicable("fewer than two cells have a nonzero velocity")
+    U = V[moving] / norm[moving, None]
+    mean = U.mean(axis=0)
+    R = float(np.linalg.norm(mean))
+    per_cell = np.full(adata.n_obs, np.nan)
+    if R > 0:
+        per_cell[moving] = U @ (mean / R)
+    return R, per_cell

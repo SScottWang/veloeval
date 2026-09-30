@@ -18,6 +18,12 @@ TopoVelo, spVelo — are favoured by construction. Score correctness on spatial
 data with a known lineage with {func}`~veloeval.metrics.cbdir` and
 {func}`~veloeval.metrics.cto`.
 
+{func}`~veloeval.metrics.field_constancy` is a diagnostic rather than a score:
+how close the field is to one constant direction. A method far more constant
+than the others on the same dataset, with high coherence, has probably
+collapsed to a constant vector, and its coherence is then no evidence of
+quality. `DIRECTION` maps it to `None`.
+
 ```{eval-rst}
 .. autosummary::
    :toctree: generated
@@ -26,4 +32,5 @@ data with a known lineage with {func}`~veloeval.metrics.cbdir` and
    veloeval.metrics.velocity_consistency
    veloeval.metrics.spatial_consistency
    veloeval.metrics.time_morans_i
+   veloeval.metrics.field_constancy
 ```

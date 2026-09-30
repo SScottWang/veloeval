@@ -43,6 +43,7 @@ r.status, r.value      # ("ok", 0.43)
 | coherence | `icvcoh` | cell-type labels | higher |
 | | `velocity_consistency` | — | higher |
 | | `spatial_consistency`, `time_morans_i` | spatial coordinates | higher |
+| | `field_constancy` | — | none (diagnostic) |
 | temporal | `tsc` | measured linear time axis | higher |
 | | `phase_corr` | inferred time; FUCCI phase | higher |
 | negative control | `sts`, `sts_abs`, `ees` | velocity graph | higher |
@@ -71,7 +72,9 @@ matrix is `missing_input`. Building one here would give the methods whose
 wrappers already built one *their* parameters and the rest defaults, so two
 methods would no longer be on the same footing and nothing would record which.
 Derive once, upstream, identically for everyone, with `ve.prepare(...)` at the
-end of each wrapper; it writes what it did into
+end of each wrapper -- or in a separate evaluation step with
+`ve.prepare(..., reference=ref)`, which puts every method on one shared
+neighbourhood, embedding and `Ms`; it writes what it did into
 `adata.uns["veloeval"]["prepared"]`.
 
 **Velocity space is declared, not guessed.** `gene` / `latent` / `embedding` /
@@ -130,7 +133,8 @@ Biology* benchmark; `cbvcoh` follows VeloAE; `cto` is the CTO of the
 reference; `icvcoh`, `tsc` and `ees` follow the *Genome Biology* benchmark.
 `cbdir`, `cbvcoh` and `icvcoh` all read the UMAP-projected velocity by default
 (VeloAE computed the two coherence metrics on `layers`; pass `basis=None` to
-`icvcoh` for that). `phase_corr` is Fisher & Lee's circular correlation
+`icvcoh` for that, and to `cbdir` for the gene-space cosines of the velocity
+graph). `phase_corr` is Fisher & Lee's circular correlation
 (*Biometrika* 1983) on uniform scores; `spatial_consistency` and `time_morans_i`
 follow TopoVelo (Gu et al., *Nat Biotechnol* 2025), as used by Huang et al.
 (bioRxiv 2026); `agreement` is the A2 of CZ Biohub (bioRxiv 2024), as used by the
