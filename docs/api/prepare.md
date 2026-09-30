@@ -19,5 +19,5 @@ adata.write_h5ad(out_path)
 
 ```{eval-rst}
 .. automodule:: veloeval.prepare
-   :members: prepare, project_velocity, build_neighbor_indices
+   :members: prepare, project_velocity, build_neighbor_indices, build_spatial_neighbors
 ```

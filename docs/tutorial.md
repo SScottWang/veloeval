@@ -59,6 +59,9 @@ results = {
     "sts_abs": M.sts_abs(adata),
     "ees": M.ees(adata),
     "phase_dir": M.phase_dir(adata, phase_key=ds.get("phase_key", "__absent__")),
+    "phase_corr": M.phase_corr(adata, phase_key=ds.get("phase_key", "__absent__")),
+    "spatial_consistency": M.spatial_consistency(adata),
+    "time_morans_i": M.time_morans_i(adata),
 }
 
 row = {"method": method, "dataset": dataset, "seed": seed,
@@ -89,6 +92,20 @@ results["gamma_corr"] = M.gamma_corr(
 
 Use the same `scored_genes` for every method in the table; see
 {doc}`api/groundtruth` for how to build the reference.
+
+The spatial metrics read `obsm['veloeval_spatial_knn']`, which `prepare` writes
+only when given `spatial_key="spatial"`; elsewhere they are `missing_input`.
+
+{func}`~veloeval.metrics.agreement` needs every run on the dataset at once, so
+it belongs in a rule that runs after all methods, and returns one result per
+method:
+
+```python
+runs = {m: ad.read_h5ad(p) for m, p in velocity_paths.items()}
+for method, r in M.agreement(runs).items():
+    rows[method]["agreement"] = r.value
+    rows[method]["agreement_status"] = r.status
+```
 
 ## Reading one result
 

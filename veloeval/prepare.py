@@ -17,9 +17,14 @@ from typing import Any
 
 import numpy as np
 
-from .access import KNN_KEY, set_velocity_space
+from .access import KNN_KEY, SPATIAL_KNN_KEY, set_velocity_space
 
-__all__ = ["prepare", "project_velocity", "build_neighbor_indices"]
+__all__ = [
+    "prepare",
+    "project_velocity",
+    "build_neighbor_indices",
+    "build_spatial_neighbors",
+]
 
 
 def build_neighbor_indices(
@@ -106,6 +111,54 @@ def build_neighbor_indices(
     return indices
 
 
+def build_spatial_neighbors(
+    adata, *, spatial_key: str = "spatial", n_neighbors: int = 6
+) -> np.ndarray:
+    """Write ``obsm['veloeval_spatial_knn']`` -- k nearest neighbours in physical space.
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        Must carry spot or cell coordinates in ``obsm[spatial_key]``; every
+        column is used.
+    spatial_key : str, default: "spatial"
+        ``obsm`` key of the coordinates.
+    n_neighbors : int, default: 6
+        Neighbours per cell, excluding the cell itself.  6 is the ring of
+        directly adjacent spots on a Visium hexagonal grid.
+
+    Returns
+    -------
+    numpy.ndarray
+        ``(n_obs, n_neighbors)`` array of neighbour indices, excluding the cell
+        itself.
+    """
+    from sklearn.neighbors import NearestNeighbors
+
+    if spatial_key not in adata.obsm:
+        raise KeyError(f"obsm['{spatial_key}']")
+    xy = np.asarray(adata.obsm[spatial_key], dtype=np.float64)
+    found = (
+        NearestNeighbors(n_neighbors=n_neighbors + 1)
+        .fit(xy)
+        .kneighbors(xy, return_distance=False)
+    )
+    # A cell with a coincident twin may be listed after the twin, or not at
+    # all; drop it where it is, else drop the farthest neighbour.
+    rows = []
+    for i, r in enumerate(found):
+        rows.append(r[r != i] if (r == i).any() else r[:-1])
+    indices = np.array(rows, dtype=np.int64)
+
+    adata.obsm[SPATIAL_KNN_KEY] = indices
+    _record(
+        adata,
+        "spatial_neighbors",
+        {"spatial_key": spatial_key, "n_neighbors": n_neighbors},
+    )
+    return indices
+
+
 def project_velocity(adata, basis: str = "umap", vkey: str = "velocity", **kwargs):
     """Write ``obsm['{vkey}_{basis}']`` via scVelo's embedding projection.
 
@@ -135,6 +188,7 @@ def prepare(
     overwrite_neighbors: bool = False,
     transition: bool = False,
     pseudotime: bool = False,
+    spatial_key: str | None = None,
 ) -> None:
     """One call at the end of a method wrapper.
 
@@ -144,8 +198,10 @@ def prepare(
     build theirs from the velocity graph -- and (with *pseudotime*) writes
     ``obs['{vkey}_pseudotime']`` with ``scvelo.tl.velocity_pseudotime`` when the
     method left none -- needed only to reproduce the Genome Biology benchmark's
-    CTO, see :func:`~veloeval.metrics.cto`.  Everything it does is recorded in
-    ``uns['veloeval']['prepared']``.
+    CTO, see :func:`~veloeval.metrics.cto`.  With *spatial_key* it also writes
+    the physical-space kNN, see :func:`build_spatial_neighbors`; it is never
+    built just because ``obsm['spatial']`` exists.  Everything it does is
+    recorded in ``uns['veloeval']['prepared']``.
 
     See :func:`build_neighbor_indices` for *n_neighbors*, *n_pcs*, *use_rep* and
     *overwrite_neighbors*.
@@ -158,6 +214,9 @@ def prepare(
         use_rep=use_rep,
         overwrite=overwrite_neighbors,
     )
+
+    if spatial_key is not None:
+        build_spatial_neighbors(adata, spatial_key=spatial_key)
 
     try:
         project_velocity(adata, basis=basis, vkey=vkey)

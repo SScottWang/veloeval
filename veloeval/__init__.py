@@ -28,9 +28,14 @@ Record :data:`__version__` alongside the numbers.  Without it a table computed
 before a metric was fixed is indistinguishable from one computed after.
 """
 
-from .access import KNN_KEY, set_velocity_space, velocity_space
+from .access import KNN_KEY, SPATIAL_KNN_KEY, set_velocity_space, velocity_space
 from .metrics import DIRECTION
-from .prepare import build_neighbor_indices, prepare, project_velocity
+from .prepare import (
+    build_neighbor_indices,
+    build_spatial_neighbors,
+    prepare,
+    project_velocity,
+)
 from .result import MetricResult, MissingInput, NotApplicable, Status
 
 __version__ = "0.0.2.dev0"
@@ -42,8 +47,10 @@ __all__ = [
     "NotApplicable",
     "DIRECTION",
     "KNN_KEY",
+    "SPATIAL_KNN_KEY",
     "prepare",
     "build_neighbor_indices",
+    "build_spatial_neighbors",
     "project_velocity",
     "set_velocity_space",
     "velocity_space",

@@ -7,7 +7,16 @@ them available everywhere — and also what limits them.
 **Coherence is not correctness.** A field that is confidently, smoothly wrong
 scores as high as one that is right. Read these next to the direction metrics,
 never instead of them: a method that ranks first on coherence and last on
-{func}`~veloeval.metrics.cbdir` has produced a convincing artefact.
+{func}`~veloeval.metrics.cbdir` has produced a convincing artefact. None of
+them can tell a field from its reverse.
+
+The two spatial metrics measure the same kind of smoothness over *physical*
+neighbours, read from `obsm['veloeval_spatial_knn']` (build it with
+{func}`veloeval.build_spatial_neighbors`, or `prepare(..., spatial_key="spatial")`).
+Both come from TopoVelo, and methods that smooth over space in their model —
+TopoVelo, spVelo — are favoured by construction. Score correctness on spatial
+data with a known lineage with {func}`~veloeval.metrics.cbdir` and
+{func}`~veloeval.metrics.cto`.
 
 ```{eval-rst}
 .. autosummary::
@@ -15,4 +24,6 @@ never instead of them: a method that ranks first on coherence and last on
 
    veloeval.metrics.icvcoh
    veloeval.metrics.velocity_consistency
+   veloeval.metrics.spatial_consistency
+   veloeval.metrics.time_morans_i
 ```

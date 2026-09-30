@@ -799,3 +799,321 @@ def test_direction_covers_every_exported_metric():
 
 def test_version_is_importable():
     assert re.fullmatch(r"\d+\.\d+\.\d+(\.dev\d+)?", ve.__version__)
+
+
+# --------------------------------------------------------------------------
+# Cyclic time
+# --------------------------------------------------------------------------
+
+def _cyclic(t, phase):
+    import anndata as ad
+
+    return ad.AnnData(
+        obs=pd.DataFrame(
+            {"latent_time": t, "fucci_phase": phase},
+            index=[f"c{i}" for i in range(len(t))],
+        )
+    )
+
+
+@pytest.fixture
+def skewed_phase(rng):
+    """800 cells piled up early in the cycle, as FUCCI cells pile up in G1."""
+    return rng.beta(2, 5, 800)
+
+
+def test_fisher_lee_closed_form_is_the_pairwise_definition(rng):
+    from veloeval._math import fisher_lee
+
+    a, b = rng.uniform(0, 2 * np.pi, (2, 60))
+    i, j = np.triu_indices(60, 1)
+    sa, sb = np.sin(a[i] - a[j]), np.sin(b[i] - b[j])
+    naive = (sa * sb).sum() / np.sqrt((sa**2).sum() * (sb**2).sum())
+    assert fisher_lee(a, b) == pytest.approx(naive, abs=1e-10)
+
+
+@pytest.mark.parametrize("cut", [0.0, 0.5, 0.8])
+def test_phase_corr_ignores_where_a_correct_order_cuts_the_cycle(skewed_phase, cut):
+    t = ((skewed_phase - cut) % 1) ** 3 * 7 + 2
+    assert M.phase_corr(_cyclic(t, skewed_phase)).value > 0.99
+
+
+def test_tsc_depends_on_the_cut_which_is_why_phase_corr_exists(skewed_phase):
+    t = ((skewed_phase - 0.5) % 1) ** 3 * 7 + 2
+    a = _cyclic(t, skewed_phase)
+    assert M.tsc(a, time_key="latent_time", true_time_key="fucci_phase").value < 0.5
+
+
+def test_phase_corr_reversed_random_and_radians(skewed_phase, rng):
+    phase = skewed_phase
+    assert M.phase_corr(_cyclic((0.3 - phase) % 1, phase)).value < -0.99
+    assert abs(M.phase_corr(_cyclic(rng.uniform(size=phase.size), phase)).value) < 0.1
+    radians = (2 * np.pi * phase + 1.0) % (2 * np.pi)
+    assert M.phase_corr(_cyclic(radians, phase)).value > 0.99
+
+
+def test_phase_corr_drops_nan_cells(skewed_phase):
+    t = skewed_phase.copy()
+    t[:50] = np.nan
+    r = M.phase_corr(_cyclic(t, skewed_phase))
+    assert r.status == "ok"
+    assert r.detail == "750 cells"
+
+
+def test_phase_corr_not_applicable(skewed_phase):
+    n = skewed_phase.size
+    constant = _cyclic(np.ones(n), skewed_phase)
+    two_valued = _cyclic((np.arange(n) % 2).astype(float), skewed_phase)
+    assert M.phase_corr(constant).status == "not_applicable"
+    assert M.phase_corr(two_valued).status == "not_applicable"
+    a = _cyclic(skewed_phase, skewed_phase)
+    assert M.phase_corr(a, time_key="absent").status == "not_applicable"
+    assert M.phase_corr(a, phase_key="absent").status == "not_applicable"
+
+
+# --------------------------------------------------------------------------
+# Spatial
+# --------------------------------------------------------------------------
+
+def _hex_grid(n_rows=8, n_cols=8):
+    r, c = np.divmod(np.arange(n_rows * n_cols), n_cols)
+    return np.column_stack([c + 0.5 * (r % 2), r * np.sqrt(3) / 2])
+
+
+def test_build_spatial_neighbors_takes_the_hexagonal_ring():
+    import anndata as ad
+
+    xy = _hex_grid()
+    a = ad.AnnData(obs=pd.DataFrame(index=[f"s{i}" for i in range(len(xy))]))
+    a.obsm["spatial"] = xy
+    idx = ve.build_spatial_neighbors(a)
+
+    assert idx.shape == (len(xy), 6)
+    assert (idx != np.arange(len(xy))[:, None]).all()
+    interior = 3 * 8 + 3
+    d = np.linalg.norm(xy[idx[interior]] - xy[interior], axis=1)
+    assert d == pytest.approx(np.ones(6))
+    assert a.obsm[ve.SPATIAL_KNN_KEY] is idx
+    assert a.uns["veloeval"]["prepared"]["spatial_neighbors"] == {
+        "spatial_key": "spatial",
+        "n_neighbors": 6,
+    }
+
+
+def test_build_spatial_neighbors_survives_coincident_spots():
+    import anndata as ad
+
+    xy = np.vstack([_hex_grid(), _hex_grid()[:5]])
+    a = ad.AnnData(obs=pd.DataFrame(index=[f"s{i}" for i in range(len(xy))]))
+    a.obsm["spatial"] = xy
+    idx = ve.build_spatial_neighbors(a)
+    assert idx.shape == (len(xy), 6)
+    assert (idx != np.arange(len(xy))[:, None]).all()
+
+
+def test_prepare_builds_the_spatial_graph_only_when_asked(blobs):
+    blobs.obsm["spatial"] = blobs.obsm["X_pca"][:, :2]
+    plain = blobs.copy()
+    ve.prepare(plain)
+    assert ve.SPATIAL_KNN_KEY not in plain.obsm
+
+    ve.prepare(blobs, spatial_key="spatial")
+    assert blobs.obsm[ve.SPATIAL_KNN_KEY].shape == (blobs.n_obs, 6)
+
+
+@pytest.fixture
+def spots(rng):
+    """64 hexagonal spots with 20-gene velocity and the spatial kNN built."""
+    import anndata as ad
+
+    xy = _hex_grid()
+    a = ad.AnnData(np.zeros((len(xy), 20)))
+    a.layers["velocity"] = rng.normal(size=(len(xy), 20))
+    a.obsm["spatial"] = xy
+    ve.build_spatial_neighbors(a)
+    return a
+
+
+def test_spatial_consistency_uniform_field_scores_one(spots, rng):
+    spots.layers["velocity"] = np.tile(rng.normal(size=20), (spots.n_obs, 1))
+    assert M.spatial_consistency(spots).value == pytest.approx(1.0)
+
+
+def test_spatial_consistency_cannot_see_a_reversed_field(spots):
+    flipped = spots.copy()
+    flipped.layers["velocity"] = -flipped.layers["velocity"]
+    np.testing.assert_allclose(
+        M.spatial_consistency(flipped).per_cell,
+        M.spatial_consistency(spots).per_cell,
+    )
+
+
+def test_spatial_consistency_is_scvelo_velocity_confidence(spots):
+    pytest.importorskip("scvelo")
+    expected = _scvelo_confidence(spots, spots.obsm[ve.SPATIAL_KNN_KEY])
+    r = M.spatial_consistency(spots)
+    np.testing.assert_allclose(r.per_cell, expected, atol=1e-12)
+
+
+def test_spatial_consistency_needs_the_spatial_graph(spots):
+    del spots.obsm[ve.SPATIAL_KNN_KEY]
+    r = M.spatial_consistency(spots)
+    assert r.status == "missing_input"
+    assert "spatial_key" in r.detail
+
+
+def _ring(t):
+    import anndata as ad
+
+    n = len(t)
+    obs = pd.DataFrame({"latent_time": t}, index=[f"s{i}" for i in range(n)])
+    a = ad.AnnData(obs=obs)
+    i = np.arange(n)
+    a.obsm[ve.SPATIAL_KNN_KEY] = np.column_stack([(i - 1) % n, (i + 1) % n])
+    return a
+
+
+def test_time_morans_i_exact_on_a_ring():
+    n = 40
+    i = np.arange(n)
+    assert M.time_morans_i(_ring((-1.0) ** i)).value == pytest.approx(-1.0)
+    wave = np.cos(2 * np.pi * i / n)
+    assert M.time_morans_i(_ring(wave)).value == pytest.approx(np.cos(2 * np.pi / n))
+    assert M.time_morans_i(_ring(1 - wave)).value == pytest.approx(
+        M.time_morans_i(_ring(wave)).value
+    )
+
+
+def test_time_morans_i_nan_shuffled_and_statuses(rng):
+    n = 40
+    t = np.cos(2 * np.pi * np.arange(n) / n)
+    t[[3, 17]] = np.nan
+    assert np.isfinite(M.time_morans_i(_ring(t)).value)
+
+    shuffled = M.time_morans_i(_ring(rng.permutation(400).astype(float)))
+    assert shuffled.value == pytest.approx(-1 / 399, abs=0.2)
+    assert shuffled.detail == "expected -0.003 without spatial structure"
+
+    a = _ring(np.ones(n))
+    assert M.time_morans_i(a).status == "not_applicable"
+    assert M.time_morans_i(a, time_key="absent").status == "not_applicable"
+    del a.obsm[ve.SPATIAL_KNN_KEY]
+    a.obs["latent_time"] = np.arange(n, dtype=float)
+    assert M.time_morans_i(a).status == "missing_input"
+
+
+# --------------------------------------------------------------------------
+# Agreement
+# --------------------------------------------------------------------------
+
+@pytest.fixture
+def cells(rng):
+    """200 cells in 2-D with a shared 12-neighbour kNN and a +x flow."""
+    X = rng.normal(size=(200, 2))
+    from tests.conftest import knn_indices
+
+    return X, knn_indices(X, 13)[:, 1:], np.tile([1.0, 0.0], (200, 1))
+
+
+def _run(X, knn, V):
+    """A run whose velocity graph holds cos(x_j - x_i, v_i) over the kNN."""
+    import anndata as ad
+    from scipy.sparse import csr_matrix
+
+    n, k = knn.shape
+    rows = np.repeat(np.arange(n), k)
+    cols = knn.ravel()
+    d = X[cols] - X[rows]
+    v = V[rows]
+    cos = (d * v).sum(1) / (np.linalg.norm(d, axis=1) * np.linalg.norm(v, axis=1))
+    a = ad.AnnData(obs=pd.DataFrame(index=[f"c{i}" for i in range(n)]))
+    for key, keep in (("velocity_graph", cos > 0), ("velocity_graph_neg", cos < 0)):
+        a.uns[key] = csr_matrix((cos[keep], (rows[keep], cols[keep])), shape=(n, n))
+    return a
+
+
+def _noisy_runs(cells, rng, n_runs=4, sd=0.3):
+    X, knn, V = cells
+    return {f"m{r}": _run(X, knn, V + rng.normal(scale=sd, size=V.shape))
+            for r in range(n_runs)}
+
+
+def test_agreement_identical_runs_agree_fully(cells):
+    pytest.importorskip("scvelo")
+    run = _run(*cells)
+    res = M.agreement({"a": run, "b": run.copy(), "c": run.copy()}, min_methods=3)
+    for r in res.values():
+        assert r.status == "ok"
+        assert r.value == pytest.approx(1.0)
+        assert all(v == pytest.approx(1.0) for v in r.per_group.values())
+        assert r.detail == "3 methods; median neighbour overlap 1.00"
+
+
+def test_agreement_singles_out_the_reversed_method(cells, rng):
+    pytest.importorskip("scvelo")
+    X, knn, V = cells
+    runs = _noisy_runs(cells, rng)
+    runs["reversed"] = _run(X, knn, -V)
+    res = M.agreement(runs)
+    others = [res[m].value for m in runs if m != "reversed"]
+    assert res["reversed"].value < min(others) - 0.3
+    assert set(res["reversed"].per_group) == set(runs) - {"reversed"}
+
+    shuffled = M.agreement(dict(reversed(list(runs.items()))))
+    for m in runs:
+        np.testing.assert_allclose(shuffled[m].per_cell, res[m].per_cell)
+
+
+def test_agreement_is_cz_biohubs_dense_computation(cells, rng):
+    scv = pytest.importorskip("scvelo")
+    runs = _noisy_runs(cells, rng, n_runs=5)
+    res = M.agreement(runs)
+
+    dense = np.stack([
+        scv.utils.get_transition_matrix(a, vgraph=a.uns["velocity_graph"]).toarray()
+        for a in runs.values()
+    ])
+    median = np.median(dense, axis=0)
+    for k, m in enumerate(runs):
+        cos = (dense[k] * median).sum(1) / (
+            np.linalg.norm(dense[k], axis=1) * np.linalg.norm(median, axis=1)
+        )
+        np.testing.assert_allclose(res[m].per_cell, cos, atol=1e-10)
+
+
+def test_agreement_refuses_different_neighbour_graphs(cells, rng):
+    pytest.importorskip("scvelo")
+    X, knn, V = cells
+    runs = _noisy_runs(cells, rng)
+    offsets = np.array([rng.choice(np.arange(1, 200), 12, replace=False) for _ in X])
+    runs["elsewhere"] = _run(X, (np.arange(200)[:, None] + offsets) % 200, V)
+    res = M.agreement(runs)
+    assert {r.status for r in res.values()} == {"not_applicable"}
+    assert "neighbour overlap" in res["m0"].detail
+
+
+def test_agreement_statuses(cells, rng):
+    pytest.importorskip("scvelo")
+    runs = _noisy_runs(cells, rng, n_runs=6)
+
+    few = M.agreement({m: runs[m] for m in ["m0", "m1", "m2"]})
+    assert {r.status for r in few.values()} == {"not_applicable"}
+
+    renamed = dict(runs)
+    renamed["m5"] = runs["m5"].copy()
+    renamed["m5"].obs_names = [f"x{i}" for i in range(200)]
+    assert {r.status for r in M.agreement(renamed).values()} == {"not_applicable"}
+
+    broken = dict(runs)
+    broken["m5"] = runs["m5"].copy()
+    del broken["m5"].uns["velocity_graph"]
+    res = M.agreement(broken)
+    assert res["m5"].status == "missing_input"
+    assert {res[m].status for m in runs if m != "m5"} == {"ok"}
+    assert "m5" not in res["m0"].per_group
+
+
+def test_agreement_without_scvelo_is_missing_input(cells, monkeypatch):
+    monkeypatch.setitem(sys.modules, "scvelo", None)
+    res = M.agreement({"a": _run(*cells)})
+    assert res["a"].status == "missing_input"

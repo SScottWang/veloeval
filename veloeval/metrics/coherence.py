@@ -12,14 +12,15 @@ import pandas as pd
 
 from .._math import nanmean, rowwise_cosine
 from ..access import (
+    SPATIAL_KNN_KEY,
     get_labels,
     get_neighbor_indices,
     get_velocity,
     get_velocity_embedding,
 )
-from ..result import MissingInput, metric
+from ..result import MetricResult, MissingInput, NotApplicable, metric
 
-__all__ = ["icvcoh", "velocity_consistency"]
+__all__ = ["icvcoh", "velocity_consistency", "spatial_consistency", "time_morans_i"]
 
 
 @metric
@@ -156,6 +157,11 @@ def velocity_consistency(adata, *, vkey: str = "velocity"):
         res.value
         res.per_cell  # equals scVelo's obs["velocity_confidence"]
     """
+    return _scvelo_confidence(adata, get_neighbor_indices(adata), vkey)
+
+
+def _scvelo_confidence(adata, indices, vkey):
+    """scVelo's ``velocity_confidence`` of ``layers[vkey]`` over *indices*."""
     import anndata as ad
     from scipy.sparse import csr_matrix
 
@@ -164,7 +170,6 @@ def velocity_consistency(adata, *, vkey: str = "velocity"):
     except ImportError:
         raise MissingInput("scvelo (pip install veloeval[prepare])") from None
 
-    indices = get_neighbor_indices(adata)
     get_velocity(adata, vkey)
     if vkey not in adata.layers:
         raise MissingInput(f"layers['{vkey}']")
@@ -194,3 +199,146 @@ def velocity_consistency(adata, *, vkey: str = "velocity"):
 
     per_cell = sub.obs[f"{vkey}_confidence"].to_numpy(dtype=np.float64)
     return nanmean(per_cell), per_cell
+
+
+@metric
+def spatial_consistency(adata, *, vkey: str = "velocity"):
+    """Spatial velocity consistency.
+
+    :func:`velocity_consistency` with the neighbours taken in physical space,
+    ``obsm['veloeval_spatial_knn']``, instead of expression space: scVelo's
+    ``velocity_confidence`` -- per-neighbour cosine of gene-centred velocities,
+    averaged, negatives clipped to 0 -- as in TopoVelo (Gu et al., *Nat
+    Biotechnol* 2025).
+
+    Higher is better; range ``[0, 1]``.
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        Must carry gene-space ``layers[vkey]`` and
+        ``obsm['veloeval_spatial_knn']`` (see
+        :func:`veloeval.build_spatial_neighbors`).
+    vkey : str, default: "velocity"
+        Velocity layer key.
+
+    Returns
+    -------
+    MetricResult
+        ``per_cell`` holds each spot's score.
+
+    Notes
+    -----
+    Cannot detect a reversed field: :math:`V` and :math:`-V` score the same.
+    It is a coherence measure, not a correctness one.
+
+    Methods that smooth over space in their model (TopoVelo, spVelo) are
+    favoured by construction, since the metric comes from the same line of
+    work; score correctness on spatial data with a known lineage with
+    :func:`~veloeval.metrics.cbdir` and :func:`~veloeval.metrics.cto`.
+
+    Values are not guaranteed to match Huang et al. (bioRxiv 2026), which does
+    not state its k or whether negatives are clipped.
+
+    Requires scvelo (``pip install veloeval[prepare]``); without it the
+    status is ``missing_input``.
+
+    Examples
+    --------
+    .. code-block:: python
+
+        import veloeval as ve
+        from veloeval import metrics as M
+
+        ve.build_spatial_neighbors(adata, spatial_key="spatial")  # Visium: 6
+        res = M.spatial_consistency(adata)
+        res.value
+        res.per_cell
+    """
+    return _scvelo_confidence(
+        adata, get_neighbor_indices(adata, key=SPATIAL_KNN_KEY), vkey
+    )
+
+
+def _knn_adjacency(indices, n):
+    """Binary, symmetric adjacency from a kNN table, no self-loops."""
+    from scipy.sparse import csr_matrix
+
+    indices = np.asarray(indices)
+    rows = np.repeat(np.arange(n), indices.shape[1])
+    W = csr_matrix((np.ones(rows.size), (rows, indices.ravel())), shape=(n, n))
+    W = ((W + W.T) > 0).astype(np.float64).tocsr()
+    W.setdiag(0)
+    W.eliminate_zeros()
+    return W
+
+
+@metric
+def time_morans_i(adata, *, time_key: str = "latent_time"):
+    r"""Moran's I of the inferred time over the spatial neighbour graph.
+
+    With :math:`W` the binary, symmetrised spatial kNN adjacency (no
+    self-loops), :math:`z = t - \bar t` and :math:`S_0 = \sum_{ij} W_{ij}`,
+
+    .. math::
+
+        I = \frac{n}{S_0} \cdot \frac{z^\top W z}{z^\top z}
+
+    (Moran, *Biometrika* 1950), as applied to inferred time in TopoVelo (Gu et
+    al., *Nat Biotechnol* 2025) and called spatial time consistency by Huang
+    et al. (bioRxiv 2026).
+
+    Higher is better; roughly ``[-1, 1]``, with :math:`-1/(n-1)` expected
+    without spatial structure.
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        Must carry ``obs[time_key]`` and ``obsm['veloeval_spatial_knn']`` (see
+        :func:`veloeval.build_spatial_neighbors`).
+    time_key : str, default: "latent_time"
+        Column holding the method's inferred time.  Cells where it is NaN are
+        dropped, together with their edges.
+
+    Returns
+    -------
+    MetricResult
+        :math:`I`; ``detail`` gives its expectation without spatial structure.
+
+    Notes
+    -----
+    Cannot detect a reversed time: :math:`I(t) = I(1 - t)`.  It is a
+    coherence measure, not a correctness one, and the same caveat as for
+    :func:`spatial_consistency` applies to methods that smooth over space.
+
+    Examples
+    --------
+    .. code-block:: python
+
+        import veloeval as ve
+        from veloeval import metrics as M
+
+        ve.build_spatial_neighbors(adata, spatial_key="spatial")
+        res = M.time_morans_i(adata, time_key="latent_time")
+        res.value
+        res.detail  # expectation without spatial structure
+    """
+    if time_key not in adata.obs:
+        raise NotApplicable(f"method infers no obs['{time_key}']")
+    W = _knn_adjacency(get_neighbor_indices(adata, key=SPATIAL_KNN_KEY), adata.n_obs)
+
+    t = adata.obs[time_key].to_numpy(dtype=np.float64)
+    keep = np.isfinite(t)
+    W, t = W[keep][:, keep], t[keep]
+    n = t.size
+    z = t - t.mean() if n else t
+    s0 = W.sum()
+    if n < 2 or s0 == 0 or z @ z == 0:
+        raise NotApplicable("inferred time is constant or has no spatial neighbours")
+
+    moran = n / s0 * (z @ (W @ z)) / (z @ z)
+    return MetricResult(
+        name="time_morans_i",
+        value=float(moran),
+        detail=f"expected {-1 / (n - 1):.3f} without spatial structure",
+    )

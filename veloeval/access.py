@@ -26,6 +26,7 @@ from .result import MissingInput, NotApplicable
 
 __all__ = [
     "KNN_KEY",
+    "SPATIAL_KNN_KEY",
     "VeloSpace",
     "velocity_space",
     "set_velocity_space",
@@ -45,6 +46,10 @@ __all__ = [
 #: what a per-cell array of fixed width is for, and because ``uns['neighbors']``
 #: is scanpy's.
 KNN_KEY = "veloeval_knn"
+
+#: ``obsm`` key holding the k nearest neighbours in *physical* space, same
+#: layout as :data:`KNN_KEY`.  Written by :func:`veloeval.build_spatial_neighbors`.
+SPATIAL_KNN_KEY = "veloeval_spatial_knn"
 
 #: Where a method's velocity vectors live.
 #:
@@ -136,17 +141,21 @@ def get_embedding(adata, basis: str = "umap") -> np.ndarray:
     return np.asarray(adata.obsm[key], dtype=np.float64)
 
 
-def get_neighbor_indices(adata) -> np.ndarray:
-    """kNN index array ``(n_cells, k)`` from ``obsm['veloeval_knn']``.
+def get_neighbor_indices(adata, key: str = KNN_KEY) -> np.ndarray:
+    """kNN index array ``(n_cells, k)`` from ``obsm[key]``.
 
-    Falls back to ``uns['neighbors']['indices']``, which is where
-    :func:`veloeval.build_neighbor_indices` used to write.  That slot belongs to
-    scanpy -- putting a bare index array there leaves a malformed neighbours
-    record that makes a later :func:`scanpy.pp.neighbors` raise -- so it is read
-    but no longer written.
+    For the shared expression kNN, falls back to ``uns['neighbors']['indices']``,
+    which is where :func:`veloeval.build_neighbor_indices` used to write.  That
+    slot belongs to scanpy -- putting a bare index array there leaves a
+    malformed neighbours record that makes a later :func:`scanpy.pp.neighbors`
+    raise -- so it is read but no longer written.
     """
-    if KNN_KEY in adata.obsm:
-        return np.asarray(adata.obsm[KNN_KEY])
+    if key in adata.obsm:
+        return np.asarray(adata.obsm[key])
+    if key == SPATIAL_KNN_KEY:
+        raise MissingInput(f"obsm['{key}'] (prepare(..., spatial_key='spatial'))")
+    if key != KNN_KEY:
+        raise MissingInput(f"obsm['{key}']")
     legacy = adata.uns.get("neighbors", {})
     if "indices" in legacy:
         return np.asarray(legacy["indices"])

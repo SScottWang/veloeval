@@ -378,6 +378,10 @@ def cto(
     Ties count as wrong, so a constant time scores 0.  Cells with ``nan`` time
     are dropped rather than set to 0.
 
+    On a cyclic stage order (G1 -> S -> G2M -> G1) the closing step can be
+    satisfied by no linear time; score cyclic processes with
+    :func:`~veloeval.metrics.phase_corr` instead.
+
     Examples
     --------
     .. code-block:: python

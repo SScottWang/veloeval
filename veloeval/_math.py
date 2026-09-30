@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import numpy as np
 
-__all__ = ["rowwise_cosine", "cosine_to_one", "wrap_angle", "nanmean", "spearman"]
+__all__ = [
+    "rowwise_cosine",
+    "cosine_to_one",
+    "wrap_angle",
+    "nanmean",
+    "spearman",
+    "uniform_scores",
+    "fisher_lee",
+]
 
 
 def rowwise_cosine(A: np.ndarray, B: np.ndarray) -> np.ndarray:
@@ -47,3 +55,34 @@ def spearman(a, b) -> float:
         return float("nan")
     rho = spearmanr(a[good], b[good]).statistic
     return float(rho)
+
+
+def uniform_scores(x) -> np.ndarray:
+    """Ranks spread evenly round the circle, ``2 pi (r - 1) / n``; ties share a rank."""
+    from scipy.stats import rankdata
+
+    x = np.asarray(x, dtype=np.float64)
+    return 2 * np.pi * (rankdata(x) - 1) / x.size
+
+
+def fisher_lee(a, b) -> float:
+    r"""Fisher & Lee's (1983) circular-circular correlation of angles *a*, *b*.
+
+    .. math::
+
+        \rho = \frac{\sum_{i<j} \sin(a_i-a_j)\sin(b_i-b_j)}
+                    {\sqrt{\sum_{i<j}\sin^2(a_i-a_j)\sum_{i<j}\sin^2(b_i-b_j)}}
+
+    in O(n) via the sums of :math:`\cos`, :math:`\sin` and their double angles.
+    NaN when either side is degenerate (all equal, or two antipodal values).
+    """
+    a = np.asarray(a, dtype=np.float64)
+    b = np.asarray(b, dtype=np.float64)
+    n = a.size
+    ca, sa, cb, sb = np.cos(a), np.sin(a), np.cos(b), np.sin(b)
+    A, B, C, D = ca @ cb, sa @ sb, ca @ sb, sa @ cb
+    va = n**2 - np.cos(2 * a).sum() ** 2 - np.sin(2 * a).sum() ** 2
+    vb = n**2 - np.cos(2 * b).sum() ** 2 - np.sin(2 * b).sum() ** 2
+    if va <= 1e-9 * n**2 or vb <= 1e-9 * n**2:
+        return float("nan")
+    return float(4 * (A * B - C * D) / np.sqrt(va * vb))

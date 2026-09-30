@@ -56,13 +56,17 @@ r.per_cell  # array, nan where the cell could not be scored
 | | {func}`~veloeval.metrics.cto` | inferred time; curated edges or measured stages | higher |
 | **coherence** | {func}`~veloeval.metrics.icvcoh` | cell-type labels | higher |
 | | {func}`~veloeval.metrics.velocity_consistency` | — | higher |
-| **temporal** | {func}`~veloeval.metrics.tsc` | measured time axis | higher |
+| | {func}`~veloeval.metrics.spatial_consistency` | spatial coordinates | higher |
+| | {func}`~veloeval.metrics.time_morans_i` | inferred time; spatial coordinates | higher |
+| **temporal** | {func}`~veloeval.metrics.tsc` | measured linear time axis | higher |
+| | {func}`~veloeval.metrics.phase_corr` | inferred time; FUCCI phase | higher |
 | **negative control** | {func}`~veloeval.metrics.sts` | velocity graph | higher |
 | | {func}`~veloeval.metrics.sts_abs` | velocity graph | higher |
 | | {func}`~veloeval.metrics.ees` | velocity graph | higher |
 | **ground truth** | {func}`~veloeval.metrics.phase_dir` | FUCCI phase | higher |
 | | {func}`~veloeval.metrics.truth_cos` | labelling reference | higher |
 | | {func}`~veloeval.metrics.gamma_corr` | labelling reference, per-gene rate | higher |
+| **agreement** | {func}`~veloeval.metrics.agreement` | every run on the dataset, one neighbour graph | higher |
 
 Coherence says nothing about whether the field points the *right* way — a
 confidently wrong field scores high. Read it next to the direction metrics,
@@ -108,13 +112,22 @@ Biology* benchmark; `cbvcoh` follows VeloAE; `cto` is the CTO of the
 reference; `icvcoh`, `tsc` and `ees` follow the *Genome Biology* benchmark.
 `cbdir`, `cbvcoh` and `icvcoh` all read the UMAP-projected velocity by default
 (VeloAE computed the two coherence metrics on `layers`; pass `basis=None` to
-`icvcoh` for that).
+`icvcoh` for that). `phase_corr` is Fisher & Lee's circular correlation
+(*Biometrika* 1983) on uniform scores; `spatial_consistency` and `time_morans_i`
+follow TopoVelo (Gu et al., *Nat Biotechnol* 2025), as used by Huang et al.
+(bioRxiv 2026); `agreement` is the A2 of CZ Biohub (bioRxiv 2024), as used by the
+CRM 2026 benchmark.
 
 Checked against scVelo's code, cell by cell, in the tests: `sts` against
 `scvelo.tl.velocity_graph`'s self-transition probability, `velocity_consistency`
-against `scvelo.tl.velocity_confidence`, and the transition matrix `ees` reads
-against `scvelo.tl.transition_matrix`.
+and `spatial_consistency` against `scvelo.tl.velocity_confidence`, and the
+transition matrix `ees` reads against `scvelo.tl.transition_matrix`. `agreement`
+is checked cell by cell against CZ Biohub's dense computation, run as their
+script runs it. `phase_corr` is checked against the pairwise definition, and
+`time_morans_i` against analytic values on a ring.
 
-Not yet checked against the VeloAE or *Genome Biology* code on the same data:
-`cbdir`, `cbvcoh`, `icvcoh`, `cto`, `tsc`, and the EES formula itself. **Until they
+Not yet checked against the original code on the same data: `cbdir`, `cbvcoh`,
+`icvcoh`, `cto`, `tsc` and the EES formula itself (VeloAE, *Genome Biology*),
+`spatial_consistency` and `time_morans_i` (Huang et al.), and `agreement`
+(CRM 2026). **Until they
 are, do not present these numbers as reproducing published ones.**
