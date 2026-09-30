@@ -420,6 +420,202 @@ def test_gamma_corr_not_applicable_for_rate_free_methods(gene_space, rng):
     assert res.status == "not_applicable"
 
 
+def _cos_graph(X, V, k=15):
+    """scVelo-style graph: cos(x_j - x_i, v_i) over kNN; + in graph, - in graph_neg."""
+    from scipy.sparse import csr_matrix
+    from sklearn.neighbors import NearestNeighbors
+
+    idx = NearestNeighbors(n_neighbors=k + 1).fit(X).kneighbors(X, return_distance=False)
+    idx = idx[:, 1:]
+    rows = np.repeat(np.arange(len(X)), k)
+    D = X[idx.ravel()] - X[rows]
+    c = np.einsum("ij,ij->i", D, V[rows]) / (
+        np.linalg.norm(D, axis=1) * np.linalg.norm(V[rows], axis=1) + 1e-12
+    )
+    n = len(X)
+    pos = csr_matrix((np.where(c > 0, c, 0), (rows, idx.ravel())), shape=(n, n))
+    neg = csr_matrix((np.where(c < 0, c, 0), (rows, idx.ravel())), shape=(n, n))
+    pos.eliminate_zeros()
+    neg.eliminate_zeros()
+    return pos, neg
+
+
+def _larry_like(rng, n_clones=400, sisters=6):
+    """Day-2 progenitors in a stem (x in [0,1]); Neu branch up-right, Mo down-right,
+    Meg to the left.  Neu-vs-Mo bias rises with y; 20% of clones go Meg."""
+    import anndata as ad
+
+    X, lab, t, clone, V = [], [], [], [], []
+
+    def add(xy, label, v):
+        X.append(xy)
+        lab.append(label)
+        V.append(v)
+
+    for c in range(n_clones):
+        y = rng.uniform(-0.5, 0.5)
+        x = rng.uniform(0, 1)
+        bias = 1 / (1 + np.exp(-6 * y))
+        meg = rng.random() < 0.2
+        add([x, y], "undiff", [-1, 0] if meg else [1, 1.6 * (2 * bias - 1)])
+        t.append(2)
+        clone.append(c)
+        for _ in range(sisters):
+            s = rng.uniform(1.2, 3.0)
+            if meg:
+                add([-s, rng.normal(0, 0.08)], "Meg", [-1, 0])
+            elif rng.random() < bias:
+                add([s, 0.8 * (s - 1) + rng.normal(0, 0.08)], "Neutrophil", [1, 0.8])
+            else:
+                add([s, -0.8 * (s - 1) + rng.normal(0, 0.08)], "Monocyte", [1, -0.8])
+            t.append(rng.choice([4, 6]))
+            clone.append(c)
+    for _ in range(1500):  # unbarcoded cells
+        s = rng.uniform(0, 3)
+        if s < 1.1:
+            y = rng.uniform(-0.5, 0.5)
+            add([s, y], "undiff", [1, 1.6 * (2 / (1 + np.exp(-6 * y)) - 1)])
+        else:
+            sign = rng.choice([1, -1])
+            label = "Neutrophil" if sign > 0 else "Monocyte"
+            add([s, sign * 0.8 * (s - 1) + rng.normal(0, 0.08)], label, [1, sign * 0.8])
+        t.append(rng.choice([2, 4, 6]))
+        clone.append(np.nan)
+    obs = pd.DataFrame({"cell_type": lab, "time_point": t, "clone": clone})
+    obs.index = obs.index.astype(str)
+    return ad.AnnData(obs=obs), np.array(X, float), np.array(V, float)
+
+
+@pytest.fixture(scope="module")
+def larry():
+    return _larry_like(np.random.default_rng(0))
+
+
+def _field(larry, V=None):
+    a, X, V0 = larry
+    a = a.copy()
+    graphs = _cos_graph(X, V0 if V is None else V)
+    a.uns["velocity_graph"], a.uns["velocity_graph_neg"] = graphs
+    return a
+
+
+LARRY = dict(clone_key="clone", time_key="time_point", label_key="cell_type")
+
+
+def test_velocity_transitions_match_scvelo_and_ees(larry):
+    scv = pytest.importorskip("scvelo")
+    import anndata as ad
+
+    from veloeval.metrics._markov import velocity_transitions
+    from veloeval.metrics.negative import _transition_rows
+
+    a = _field(larry)
+    T = velocity_transitions(a, "velocity", 10.0)
+    for i, row in enumerate(_transition_rows(a, "velocity", 10.0)):
+        np.testing.assert_allclose(np.sort(T[i].data), np.sort(row), atol=1e-12)
+
+    sub = ad.AnnData(obs=pd.DataFrame(index=a.obs_names))
+    sub.uns = {k: a.uns[k] for k in ("velocity_graph", "velocity_graph_neg")}
+    ref = scv.tl.transition_matrix(sub, scale=10, self_transitions=False)
+    assert abs(T - ref).max() < 1e-12
+
+
+def test_absorption_matches_a_dense_solve():
+    from scipy.sparse import csr_matrix
+
+    from veloeval.metrics._markov import absorption
+
+    rng = np.random.default_rng(3)
+    n = 60
+    P = rng.random((n, n)) * (rng.random((n, n)) < 0.2)
+    np.fill_diagonal(P, 0)
+    P[50:] = 0  # cells 50-59: an island with no absorbing cell
+    P[50:, 50:] = rng.random((10, 10))
+    P /= P.sum(axis=1, keepdims=True)
+    P[:50, 50:] = 0
+    P[:50] /= P[:50].sum(axis=1, keepdims=True)
+    absorbing = np.zeros(n, bool)
+    absorbing[:10] = True
+    targets = [np.arange(n) < 4, (np.arange(n) >= 4) & (np.arange(n) < 10)]
+
+    B = absorption(csr_matrix(P), absorbing, targets)
+    live = np.arange(10, 50)
+    A = np.eye(40) - P[np.ix_(live, live)]
+    R = P[np.ix_(live, np.arange(10))]
+    hit = np.column_stack([t[:10] for t in targets]).astype(float)
+    dense = np.linalg.solve(A, R @ hit)
+    np.testing.assert_allclose(B[live], dense, atol=1e-12)
+    np.testing.assert_allclose(B[live].sum(axis=1), 1, atol=1e-12)
+    assert np.isnan(B[50:]).all()
+    np.testing.assert_array_equal(B[:10], np.column_stack(targets)[:10].astype(float))
+
+
+def test_lineage_fate_against_its_floor(larry):
+    true = M.lineage_fate(_field(larry), **LARRY)
+    floor = M.lineage_fate(_field(larry), **LARRY, scale=0)
+    rand = M.lineage_fate(
+        _field(larry, np.random.default_rng(1).normal(size=larry[2].shape)), **LARRY
+    )
+    assert (true.value, floor.value, rand.value) == pytest.approx(
+        (0.835, 0.695, 0.425), abs=5e-4
+    )
+    assert true.detail == "319 progenitors at 2 from 319 clones"
+    assert np.isfinite(true.per_cell).sum() == 319
+
+    rev = M.lineage_fate(_field(larry, -larry[2]), **LARRY)
+    assert rev.status == "not_applicable"
+    assert "trapped" in rev.detail
+
+
+def test_lineage_fate_leaves_adata_alone(larry):
+    a = _field(larry)
+    keys = (list(a.obs), list(a.obsm), list(a.uns), list(a.obsp))
+    M.lineage_fate(a, **LARRY)
+    assert (list(a.obs), list(a.obsm), list(a.uns), list(a.obsp)) == keys
+
+
+def test_lineage_fate_statuses(larry):
+    a = _field(larry)
+    no_neg = a.copy()
+    del no_neg.uns["velocity_graph_neg"]
+    assert M.lineage_fate(no_neg, **LARRY).status == "missing_input"
+    assert M.lineage_fate(a, **{**LARRY, "clone_key": "nope"}).status == "missing_input"
+
+    one = a.copy()
+    one.obs["time_point"] = 2
+    assert M.lineage_fate(one, **LARRY).status == "not_applicable"
+    assert M.lineage_fate(a, **LARRY, min_sisters=50).status == "not_applicable"
+
+    typo = M.lineage_fate(a, **LARRY, fates=("Neutrophill", "Monocyte"))
+    assert typo.status == "failed" and "Neutrophill" in typo.detail
+
+    days = a.copy()
+    days.obs["time_point"] = "day" + days.obs["time_point"].astype(str)
+    assert M.lineage_fate(days, **LARRY).status == "failed"
+    days.obs["time_point"] = pd.Categorical(
+        days.obs["time_point"], categories=["day2", "day4", "day6"], ordered=True
+    )
+    assert M.lineage_fate(days, **LARRY).value == M.lineage_fate(a, **LARRY).value
+
+
+def test_rate_err(linear):
+    linear.uns["cycle_period"] = 17.7
+    assert M.rate_err(linear, period=17.7).value == 0
+    linear.uns["cycle_period"] = -17.7
+    assert M.rate_err(linear, period=17.7).value == 0
+
+    linear.uns["cycle_period"] = 17.7
+    res = M.rate_err(linear, period=17.7, half_life=1.2)
+    assert res.value == pytest.approx(0.2)
+    assert res.detail == "21.2 h inferred vs 17.7 h measured (+20%); half-life 1.2 h"
+
+    assert M.rate_err(linear, period=-1).status == "failed"
+    linear.uns["cycle_period"] = 0.0
+    assert M.rate_err(linear, period=17.7).status == "not_applicable"
+    del linear.uns["cycle_period"]
+    assert M.rate_err(linear, period=17.7).status == "not_applicable"
+
+
 # --------------------------------------------------------------------------
 # Temporal
 # --------------------------------------------------------------------------

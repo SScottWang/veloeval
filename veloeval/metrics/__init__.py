@@ -14,7 +14,7 @@ from .coherence import (
     velocity_consistency,
 )
 from .direction import cbdir, cbvcoh, cto
-from .groundtruth import gamma_corr, phase_dir, truth_cos
+from .groundtruth import gamma_corr, lineage_fate, phase_dir, rate_err, truth_cos
 from .negative import ees, sts, sts_abs
 from .temporal import phase_corr, tsc
 
@@ -36,6 +36,8 @@ DIRECTION = {
     "phase_dir": "higher",
     "truth_cos": "higher",
     "gamma_corr": "higher",
+    "lineage_fate": "higher",
+    "rate_err": "lower",
     "agreement": "higher",
 }
 
@@ -55,6 +57,8 @@ __all__ = [
     "phase_dir",
     "truth_cos",
     "gamma_corr",
+    "lineage_fate",
+    "rate_err",
     "agreement",
     "DIRECTION",
 ]

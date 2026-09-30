@@ -12,9 +12,14 @@ The metrics here use a signal the model never saw:
   with real units
 - {func}`~veloeval.metrics.gamma_corr` — labelling-derived degradation rates,
   compared gene by gene
+- {func}`~veloeval.metrics.lineage_fate` — clonal barcodes: where a
+  progenitor's sisters ended up
+- {func}`~veloeval.metrics.rate_err` — live imaging: how long one cell cycle
+  takes, in hours
 
 They are the point of the benchmark, and they have the narrowest applicability
-of anything here: they need FUCCI reporters or a labelling channel, and
+of anything here: they need FUCCI reporters, a labelling channel, clonal
+barcodes or a measured cycle length, and
 `truth_cos` and `gamma_corr` need gene-wise correspondence, so methods whose
 velocity lives in a learned latent space return `not_applicable` rather than an
 incomparable number. **Read the `not_applicable` details, not just the values.**
@@ -26,6 +31,8 @@ incomparable number. **Read the `not_applicable` details, not just the values.**
    veloeval.metrics.phase_dir
    veloeval.metrics.truth_cos
    veloeval.metrics.gamma_corr
+   veloeval.metrics.lineage_fate
+   veloeval.metrics.rate_err
 ```
 
 ```{rubric} The labelling reference

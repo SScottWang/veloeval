@@ -48,6 +48,8 @@ r.status, r.value      # ("ok", 0.43)
 | negative control | `sts`, `sts_abs`, `ees` | velocity graph | higher |
 | ground truth | `phase_dir` | FUCCI phase | higher |
 | | `truth_cos`, `gamma_corr` | labelling reference | higher |
+| | `lineage_fate` | clonal barcodes; velocity graph | higher |
+| | `rate_err` | inferred period in hours; measured period | lower |
 | agreement | `agreement` | every run on the dataset, one neighbour graph | higher |
 
 Coherence says nothing about whether the field points the *right* way — a
@@ -82,9 +84,10 @@ via `ve.prepare(..., space=...)` or `ve.set_velocity_space(adata, "latent")`.
 Orchestration (assembling rows, aggregating seeds, runtime and memory),
 robustness sweeps (HVG sensitivity, depth stability), and arithmetic over
 results (magnitude ratios between paired control runs, rank concordance between
-two metric columns) all belong to the pipeline. So do `rate_err`, pending the
-RPE1 GSE250148 data, and a space-free `truth_cos` variant for latent-space
-methods.
+two metric columns) all belong to the pipeline. So does a space-free `truth_cos`
+variant for latent-space methods. CellRank's terminal-state identification
+(TSI) is left out: on a synthetic tree the walk without any velocity direction
+scored 1.0, above the true field (0.73) and barely above the reversed one (0.67).
 
 ## Tests
 
@@ -131,18 +134,22 @@ reference; `icvcoh`, `tsc` and `ees` follow the *Genome Biology* benchmark.
 (*Biometrika* 1983) on uniform scores; `spatial_consistency` and `time_morans_i`
 follow TopoVelo (Gu et al., *Nat Biotechnol* 2025), as used by Huang et al.
 (bioRxiv 2026); `agreement` is the A2 of CZ Biohub (bioRxiv 2024), as used by the
-CRM 2026 benchmark.
+CRM 2026 benchmark; `lineage_fate` is the clonal fate benchmark of LARRY (Weinreb et
+al., *Science* 2020), and `rate_err` VeloCycle's comparison with live imaging
+(Lederer et al., *Nat Methods* 2024).
 
 Checked against scVelo's code, cell by cell, in the tests: `sts` against
 `scvelo.tl.velocity_graph`'s self-transition probability, `velocity_consistency`
 and `spatial_consistency` against `scvelo.tl.velocity_confidence`, and the
 transition matrix `ees` reads against `scvelo.tl.transition_matrix`. `agreement`
 is checked cell by cell against CZ Biohub's dense computation, run as their
-script runs it. `phase_corr` is checked against the pairwise definition, and
-`time_morans_i` against analytic values on a ring.
+script runs it. `phase_corr` is checked against the pairwise definition,
+`time_morans_i` against analytic values on a ring, and the absorption
+probabilities `lineage_fate` reads against a dense solve.
 
 Not yet checked against the original code on the same data: `cbdir`, `cbvcoh`,
 `icvcoh`, `cto`, `tsc` and the EES formula itself (VeloAE, *Genome Biology*),
-`spatial_consistency` and `time_morans_i` (Huang et al.), and `agreement`
-(CRM 2026). Until they are,
+`spatial_consistency` and `time_morans_i` (Huang et al.), `agreement`
+(CRM 2026), and `lineage_fate`, which scores every barcoded progenitor rather than
+LARRY's curated subset. Until they are,
 do not present these numbers as reproducing published ones.

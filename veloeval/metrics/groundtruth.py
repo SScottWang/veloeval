@@ -5,9 +5,11 @@ Everything in :mod:`~veloeval.metrics.direction` and
 read off the transcriptome, so a systematic error shared by the field is
 invisible to them.  The metrics here use a signal the model never saw:
 
-``phase_dir``   FUCCI fluorescence -- a protein-level, live-imageable readout
-``truth_cos``   metabolic labelling -- a physical clock with real units
-``gamma_corr``  labelling-derived degradation rates, per gene
+``phase_dir``     FUCCI fluorescence -- a protein-level, live-imageable readout
+``truth_cos``     metabolic labelling -- a physical clock with real units
+``gamma_corr``    labelling-derived degradation rates, per gene
+``lineage_fate``  clonal barcodes -- where a progenitor's sisters ended up
+``rate_err``      live imaging -- how long one cell cycle takes, in hours
 
 They are the point of the benchmark, and they are also the ones with the
 narrowest applicability: read the ``not_applicable`` details, not just the
@@ -22,14 +24,17 @@ import pandas as pd
 from .._math import nanmean, rowwise_cosine, spearman, wrap_angle
 from ..access import (
     get_embedding,
+    get_labels,
     get_neighbor_indices,
+    get_stages,
     get_velocity,
     get_velocity_embedding,
     velocity_space,
 )
-from ..result import MetricResult, NotApplicable, metric
+from ..result import MetricResult, MissingInput, NotApplicable, metric
+from ._markov import absorption, velocity_transitions
 
-__all__ = ["phase_dir", "truth_cos", "gamma_corr"]
+__all__ = ["phase_dir", "truth_cos", "gamma_corr", "lineage_fate", "rate_err"]
 
 
 @metric
@@ -381,3 +386,261 @@ def _shared_genes(adata, reference, genes):
     if len(shared) < 10:
         raise NotApplicable(f"only {len(shared)} genes shared with the reference")
     return shared
+
+
+_ABSORBED_TOL = 1e-2
+
+
+@metric
+def lineage_fate(
+    adata,
+    *,
+    clone_key: str,
+    time_key: str,
+    label_key: str,
+    fates: tuple[str, str] = ("Neutrophil", "Monocyte"),
+    progenitor: str = "undiff",
+    vkey: str = "velocity",
+    scale: float = 10.0,
+    min_sisters: int = 1,
+):
+    r"""Clonal fate prediction: does the field send progenitors where their sisters went?
+
+    The fate-prediction benchmark of LARRY (Weinreb et al., *Science* 2020).
+    For each barcoded progenitor at the earliest time point, the observed fate
+    bias is the fraction of its later clonal relatives that became fate
+    :math:`a` rather than :math:`b`,
+
+    .. math::
+
+        p_i = \frac{n_a(c_i)}{n_a(c_i) + n_b(c_i)},
+
+    and the prediction is :math:`\hat p_i = B_a(i) / (B_a(i) + B_b(i))`, with
+    :math:`B_a(i)` the probability that a random walk on the method's velocity
+    graph from cell :math:`i` is first absorbed in a cell annotated :math:`a`.
+    Every annotated non-progenitor cell, of any type and time point, is
+    absorbing, so the terminal states are fixed by the annotation and shared by
+    all methods.  The score is the Pearson correlation of :math:`\hat p` and
+    :math:`p`.
+
+    Higher is better; range ``[-1, 1]``.
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        Must carry scVelo's velocity graph ``{vkey}_graph`` **and**
+        ``{vkey}_graph_neg``, and the three ``obs`` columns below.
+    clone_key : str
+        Column holding each cell's clone ID; ``nan`` for cells without a barcode
+        (or with several).
+    time_key : str
+        Column holding the collection time; numeric, or an ordered
+        ``Categorical``.  The earliest value is where progenitors are scored.
+    label_key : str
+        Column holding the cell-type annotation.
+    fates : (str, str), default: ("Neutrophil", "Monocyte")
+        The two fates whose balance is predicted.
+    progenitor : str, default: "undiff"
+        Annotation of the progenitors -- the transient cells.
+    vkey : str, default: "velocity"
+        Velocity key prefix.
+    scale : float, default: 10.0
+        Inverse temperature of the transitions,
+        :math:`\propto \exp(\text{scale}\cos_{ij})` over every neighbour the
+        graph scored, no self-transitions; scVelo's default.  ``0`` ignores the
+        velocity direction altogether -- see Notes.
+    min_sisters : int, default: 1
+        Fewest later :math:`a`/:math:`b` relatives a progenitor's clone must
+        have to be scored.  Larger values give a less noisy truth on fewer cells.
+
+    Returns
+    -------
+    MetricResult
+        ``per_cell`` holds :math:`\hat p` for the scored progenitors and
+        ``nan`` elsewhere; ``detail`` gives how many progenitors and clones were
+        scored, and how many were dropped as trapped (Notes).
+        ``not_applicable`` with a single time point, fewer than 10 scorable
+        progenitors, or a constant prediction or truth.
+
+    Notes
+    -----
+    Report it next to its ``scale=0`` value.  Without the velocity direction
+    the walk is a plain diffusion on the neighbour graph, and a progenitor
+    closer to one branch still tends to end up there, so the floor is well
+    above 0.  Above the floor the direction adds information; below it the
+    field is doing harm.
+
+    A field with sinks among the progenitors traps the walk: at ``scale=10``
+    a step against the velocity is :math:`e^{20}` times less likely than one
+    along it, so escaping takes more steps than double precision resolves and
+    the absorption probabilities no longer sum to 1.  Such progenitors are
+    dropped and counted in ``detail``.  A reversed field is the extreme case:
+    on a synthetic LARRY-like tree every progenitor is trapped and the result
+    is ``not_applicable`` rather than a low score -- itself a sign that the
+    field points the wrong way, to be confirmed with
+    :func:`~veloeval.metrics.cbdir`.  CellRank's solvers refuse the same
+    systems (fate probabilities that do not sum to 1).
+
+    The truth is a fraction over a few sisters and is noisy when they are few.
+    Compare methods only within one dataset and one neighbour graph, and keep
+    the graph connected: cells that can reach no absorbing cell are dropped.
+    The sparse solve grows quickly with the number of cells and neighbours;
+    subsample, keeping every barcoded cell.
+
+    Weinreb et al. scored only their curated Neutrophil/Monocyte trajectory
+    subset; here every barcoded progenitor at the first time point with
+    enough sisters is scored, so values match theirs in magnitude only.
+
+    Examples
+    --------
+    .. code-block:: python
+
+        from veloeval import metrics as M
+
+        kw = dict(clone_key="clone", time_key="Time point",
+                  label_key="Cell type annotation")
+        res = M.lineage_fate(adata, **kw)
+        floor = M.lineage_fate(adata, **kw, scale=0)  # no velocity direction
+        res.value, floor.value
+        res.detail  # progenitors and clones scored
+    """
+    a, b = fates
+    labels = get_labels(adata, label_key).astype(str)
+    missing = [x for x in (a, b, progenitor) if x not in set(labels)]
+    if missing:
+        raise ValueError(f"not found in obs['{label_key}']: {missing}")
+    if clone_key not in adata.obs:
+        raise MissingInput(f"obs['{clone_key}']")
+    stages = get_stages(adata, time_key)
+    if len(stages) < 2:
+        raise NotApplicable(f"obs['{time_key}'] has a single time point")
+    T = velocity_transitions(adata, vkey, scale)
+
+    time = adata.obs[time_key]
+    early = (time == stages[0]).to_numpy()
+    later = (time.notna() & (time != stages[0])).to_numpy()
+    clone = adata.obs[clone_key].to_numpy()
+    barcoded = pd.notna(clone)
+    to_a = pd.Series(clone[barcoded & later & (labels == a)]).value_counts()
+    to_b = pd.Series(clone[barcoded & later & (labels == b)]).value_counts()
+    cand = np.flatnonzero(barcoded & early & (labels == progenitor))
+    n_a = pd.Series(clone[cand]).map(to_a).fillna(0).to_numpy()
+    n_b = pd.Series(clone[cand]).map(to_b).fillna(0).to_numpy()
+    keep = n_a + n_b >= max(min_sisters, 1)
+    scored = cand[keep]
+    observed = n_a[keep] / (n_a[keep] + n_b[keep])
+
+    terminal = labels != progenitor
+    rest = terminal & (labels != a) & (labels != b)
+    B = absorption(T, terminal, [labels == a, labels == b, rest])[scored]
+    with np.errstate(invalid="ignore", divide="ignore"):
+        predicted = B[:, 0] / (B[:, 0] + B[:, 1])
+    resolved = np.abs(B.sum(axis=1) - 1) <= _ABSORBED_TOL
+    trapped = int((np.isfinite(B.sum(axis=1)) & ~resolved).sum())
+    predicted[~resolved] = np.nan
+
+    good = np.isfinite(predicted)
+    if good.sum() < 10:
+        why = (
+            f"; the walk from {trapped} is trapped among progenitors, "
+            "i.e. the field has sinks there"
+            if trapped
+            else ""
+        )
+        raise NotApplicable(
+            f"{int(good.sum())} of {len(scored)} progenitors at {stages[0]} with "
+            f">= {min_sisters} '{a}'/'{b}' sisters have a usable prediction{why}"
+        )
+    if np.ptp(predicted[good]) == 0 or np.ptp(observed[good]) == 0:
+        raise NotApplicable("predicted or observed fate bias is constant")
+
+    per_cell = np.full(adata.n_obs, np.nan)
+    per_cell[scored] = predicted
+    n_clones = pd.Series(clone[scored[good]]).nunique()
+    return MetricResult(
+        name="lineage_fate",
+        value=float(np.corrcoef(predicted[good], observed[good])[0, 1]),
+        detail=f"{int(good.sum())} progenitors at {stages[0]} from {n_clones} clones"
+        + (f"; {trapped} trapped, dropped" if trapped else ""),
+        per_cell=per_cell,
+    )
+
+
+@metric
+def rate_err(
+    adata, *, period: float, period_key: str = "cycle_period", half_life: float = 1.0
+):
+    r"""Relative error of the inferred cell-cycle period against live imaging.
+
+    .. math::
+
+        \hat T = |P| \cdot \text{half\_life}, \qquad
+        \mathrm{RateErr} = \frac{|\hat T - T^*|}{T^*}
+
+    where :math:`P` is the period the method inferred in its own time unit and
+    :math:`T^*` the measured one, in hours.  The comparison is VeloCycle's own
+    validation (Lederer et al., *Nat Methods* 2024), which measured RPE1 cycles
+    of 17.7 h by time-lapse imaging.
+
+    Lower is better; range ``[0, inf)``.
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        Must carry the inferred period in ``uns[period_key]``.
+    period : float
+        Measured period :math:`T^*`, in hours.
+    period_key : str, default: "cycle_period"
+        ``uns`` key of the inferred period, written by the pipeline from
+        VeloCycle's posterior.
+    half_life : float, default: 1.0
+        Hours per unit of the method's time.  VeloCycle's unit is the mean
+        transcript half-life, which its paper takes as 1 h.
+
+    Returns
+    -------
+    MetricResult
+        The relative error; ``detail`` gives both periods, the signed error and
+        the half-life used.  ``not_applicable`` without ``uns[period_key]`` or
+        with a zero or non-finite period.
+
+    Notes
+    -----
+    Cannot detect a reversed field -- the sign of the period is dropped; score
+    direction with :func:`~veloeval.metrics.phase_corr`.
+
+    Splicing-based velocity has no identifiable time unit, so only VeloCycle
+    yields a value: this checks whether its absolute rate holds up, it does not
+    rank methods.  The result scales linearly with *half_life*: a 20% error in
+    the half-life assumption is a 20% error in the period.  The measured
+    periods themselves vary between cells (s.d. / mean about 0.19 in RPE1), so
+    errors below about 0.2 are within that spread.
+
+    Examples
+    --------
+    .. code-block:: python
+
+        from veloeval import metrics as M
+
+        res = M.rate_err(adata, period=17.7)  # RPE1, time-lapse imaging
+        res.value
+        res.detail  # "18.4 h inferred vs 17.7 h measured (+4%); half-life 1 h"
+    """
+    if not (period > 0 and half_life > 0):
+        raise ValueError("period and half_life must be positive")
+    if period_key not in adata.uns:
+        raise NotApplicable(
+            f"method infers no cell-cycle period with a time unit (uns['{period_key}'])"
+        )
+    inferred = abs(float(adata.uns[period_key])) * half_life
+    if not np.isfinite(inferred) or inferred == 0:
+        raise NotApplicable(f"inferred period is {inferred}")
+    rel = (inferred - period) / period
+    return MetricResult(
+        name="rate_err",
+        value=abs(rel),
+        detail=(
+            f"{inferred:.1f} h inferred vs {period:.1f} h measured ({rel:+.0%}); "
+            f"half-life {half_life:g} h"
+        ),
+    )
