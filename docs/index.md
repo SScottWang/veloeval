@@ -18,12 +18,12 @@ api/index
 ## Install
 
 ```bash
-pip install git+https://github.com/SScottWang/veloeval.git@v0.0.1
+pip install git+https://github.com/SScottWang/veloeval.git@v0.0.2
 ```
 
 `prepare()` and `velocity_consistency` (which calls scVelo's own
 `velocity_confidence`) also need scvelo and scanpy: install with the `prepare`
-extra, `pip install "veloeval[prepare] @ git+https://github.com/SScottWang/veloeval.git@v0.0.1"`.
+extra, `pip install "veloeval[prepare] @ git+https://github.com/SScottWang/veloeval.git@v0.0.2"`.
 
 Pin a tag rather than tracking `main`, and record `veloeval.__version__`
 alongside the numbers. Without it a table computed before a metric was fixed is
