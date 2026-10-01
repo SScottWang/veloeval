@@ -44,7 +44,7 @@ from .prepare import (
 )
 from .result import MetricResult, MissingInput, NotApplicable, Status
 
-__version__ = "0.0.5.dev0"
+__version__ = "0.0.5"
 
 __all__ = [
     "MetricResult",
