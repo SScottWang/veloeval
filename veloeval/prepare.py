@@ -178,13 +178,37 @@ def project_velocity(adata, basis: str = "umap", vkey: str = "velocity", **kwarg
     return adata.obsm[f"{vkey}_{basis}"]
 
 
-def _use_reference(adata, reference, basis: str) -> int:
-    """Give *adata* the reference's PCA, embedding and neighbour graph on its cells.
+def _clear_own_derivations(adata, vkey: str) -> list:
+    """Drop what the method's pipeline derived from its own graph or embedding.
 
-    Returns how many reference cells the method dropped.  If it dropped some,
-    the graph is rebuilt on the reference PCA of the remaining cells with the
-    reference's parameters: slicing the reference graph would leave cells short
-    of neighbours.
+    Its own time (``latent_time``, ``fit_t``, ...) carries no ``{vkey}_`` prefix
+    and stays.  Returns the keys removed.
+    """
+    removed = []
+    stores = {
+        "obsm": lambda k: k.startswith(("X_", f"{vkey}_")),
+        "obsp": lambda k: (
+            k in ("distances", "connectivities", "T_fwd") or k.startswith(f"{vkey}_")
+        ),
+        "obs": lambda k: k.startswith(f"{vkey}_") or k in ("root_cells", "end_points"),
+        "uns": lambda k: k in ("neighbors", f"{vkey}_graph", f"{vkey}_graph_neg"),
+    }
+    for name, drop in stores.items():
+        store = getattr(adata, name)
+        for key in [k for k in list(store.keys()) if drop(k)]:
+            del store[key]
+            removed.append(f"{name}['{key}']")
+    return removed
+
+
+def _use_reference(adata, reference, basis: str) -> tuple:
+    """Give *adata* the reference's embeddings and neighbour graph on its cells.
+
+    Every ``obsm['X_*']`` of the reference is copied.  Returns how many
+    reference cells the method dropped and the representation the graph is
+    built on.  If cells were dropped, the graph is rebuilt on that
+    representation with the reference's parameters: slicing the reference
+    graph would leave cells short of neighbours.
     """
     missing = adata.obs_names.difference(reference.obs_names)
     if len(missing):
@@ -193,14 +217,17 @@ def _use_reference(adata, reference, basis: str) -> int:
         )
     if "params" not in reference.uns.get("neighbors", {}):
         raise ValueError("reference has no uns['neighbors'] from scanpy.pp.neighbors")
-    ref = reference[adata.obs_names]
-    for key in ("X_pca", f"X_{basis}"):
-        if key not in ref.obsm:
-            raise ValueError(f"reference has no obsm['{key}']")
-    for key in ("X_pca", f"X_{basis}"):
-        adata.obsm[key] = np.asarray(ref.obsm[key])
-
     params = dict(reference.uns["neighbors"]["params"])
+    rep = params.get("use_rep") or "X_pca"
+    for key in (rep, f"X_{basis}"):
+        if key not in reference.obsm:
+            raise ValueError(f"reference has no obsm['{key}']")
+
+    ref = reference[adata.obs_names]
+    for key in ref.obsm.keys():
+        if key.startswith("X_"):
+            adata.obsm[key] = np.asarray(ref.obsm[key])
+
     dropped = reference.n_obs - adata.n_obs
     if dropped == 0:
         for key in ("distances", "connectivities"):
@@ -216,65 +243,86 @@ def _use_reference(adata, reference, basis: str) -> int:
         sc.pp.neighbors(
             adata,
             n_neighbors=int(params["n_neighbors"]),
-            use_rep="X_pca",
+            use_rep=rep,
             n_pcs=params.get("n_pcs"),
             method=params.get("method", "umap"),
             metric=params.get("metric", "euclidean"),
             random_state=params.get("random_state", 0),
         )
-    return dropped
+    return dropped, rep
 
 
-def _reference_velocity_graph(adata, reference, vkey: str, space: str) -> dict:
+def _dense32(x) -> np.ndarray:
+    return np.asarray(x.toarray() if hasattr(x, "toarray") else x, dtype=np.float32)
+
+
+def _scored_genes(adata, reference, vkey: str) -> np.ndarray:
+    """The method's ``{vkey}_genes`` if any, with finite velocity, in the reference."""
+    # A column sums to NaN iff it holds one; no need to densify.
+    finite = ~np.isnan(np.asarray(adata.layers[vkey].sum(axis=0)).ravel())
+    keep = adata.var_names.isin(reference.var_names) & finite
+    if f"{vkey}_genes" in adata.var:
+        keep &= adata.var[f"{vkey}_genes"].to_numpy(dtype=bool)
+    return keep
+
+
+def _reference_velocity_graph(adata, reference, vkey: str, space: str, n_jobs=None):
     """Recompute scVelo's velocity graph on the reference neighbours.
 
-    Gene space: displacements from the reference ``Ms``, on the genes the
-    method scored and the reference has.  Latent space: the method's own
-    coordinates in ``layers['Ms']``.  ``sqrt_transform=False`` for everyone:
-    scVelo otherwise decides it from the method's own ``uns['{vkey}_params']``.
-    Returns what to record.
+    Gene space: displacements from the reference ``Ms`` on the gene set G --
+    the genes the method scored, with finite velocity, that the reference has
+    -- which is written to ``var['veloeval_genes']`` for every later read.
+    Latent space: the method's own coordinates in ``layers['Ms']``.  Computed
+    on a stand-in holding only those columns; only the graphs come back.
+    ``sqrt_transform=False`` for everyone: scVelo otherwise decides it from the
+    method's own ``uns['{vkey}_params']``.  Returns what to record.
     """
+    import anndata as ad
+    import pandas as pd
     import scvelo as scv
 
-    for key in (f"{vkey}_graph", f"{vkey}_graph_neg"):
-        adata.uns.pop(key, None)
-        if key in adata.obsp:
-            del adata.obsp[key]
-
+    if vkey not in adata.layers:
+        raise ValueError(f"no layers['{vkey}']")
     if space == "gene":
-        if vkey not in adata.layers:
-            raise ValueError(f"no layers['{vkey}']")
         if "Ms" not in reference.layers:
             raise ValueError("reference has no layers['Ms']")
-        V = adata.layers[vkey]
-        V = V.toarray() if hasattr(V, "toarray") else np.asarray(V)
-        keep = adata.var_names.isin(reference.var_names) & ~np.isnan(V).any(axis=0)
-        if f"{vkey}_genes" in adata.var:
-            keep &= adata.var[f"{vkey}_genes"].to_numpy(dtype=bool)
+        keep = _scored_genes(adata, reference, vkey)
         genes = adata.var_names[keep]
         if len(genes) == 0:
             raise ValueError("no gene is both scored by the method and in the reference")
-        ref_ms = reference[adata.obs_names, genes].layers["Ms"]
-        Ms = np.zeros(adata.shape, dtype=np.float32)
-        Ms[:, keep] = ref_ms.toarray() if hasattr(ref_ms, "toarray") else ref_ms
-        # scVelo silently falls back to 'spliced' when xkey is not a layer.
-        adata.layers["veloeval_Ms"] = Ms
-        try:
-            scv.tl.velocity_graph(
-                adata, vkey=vkey, xkey="veloeval_Ms", gene_subset=genes,
-                sqrt_transform=False,
-            )
-        finally:
-            del adata.layers["veloeval_Ms"]
-        return {"xkey": "reference Ms", "n_genes": int(keep.sum()),
-                "sqrt_transform": False, "scvelo": scv.__version__}
-    if space == "latent":
+        adata.var["veloeval_genes"] = keep
+        V = _dense32(adata.layers[vkey][:, keep])
+        X = _dense32(reference[adata.obs_names, genes].layers["Ms"])
+        info = {"xkey": "reference Ms", "n_genes": int(keep.sum())}
+    elif space == "latent":
         if "Ms" not in adata.layers:
             raise ValueError("latent space: put the latent coordinates in layers['Ms']")
-        scv.tl.velocity_graph(adata, vkey=vkey, sqrt_transform=False)
-        return {"xkey": "method's own layers['Ms']", "sqrt_transform": False,
-                "scvelo": scv.__version__}
-    return {"skipped": f"no velocity graph in {space!r} space"}
+        genes = adata.var_names
+        V, X = _dense32(adata.layers[vkey]), _dense32(adata.layers["Ms"])
+        info = {"xkey": "method's own layers['Ms']"}
+    else:
+        return {"skipped": f"no velocity graph in {space!r} space"}
+
+    sub = ad.AnnData(
+        obs=pd.DataFrame(index=adata.obs_names), var=pd.DataFrame(index=genes)
+    )
+    sub.layers[vkey], sub.layers["Ms"] = V, X
+    for key in ("distances", "connectivities"):
+        sub.obsp[key] = adata.obsp[key]
+    sub.uns["neighbors"] = adata.uns["neighbors"]
+    scv.tl.velocity_graph(
+        sub, vkey=vkey, xkey="Ms", sqrt_transform=False, n_jobs=n_jobs
+    )
+    for key in (f"{vkey}_graph", f"{vkey}_graph_neg"):
+        adata.uns[key] = sub.uns[key]
+    if f"{vkey}_self_transition" in sub.obs:
+        adata.obs[f"{vkey}_self_transition"] = sub.obs[f"{vkey}_self_transition"].values
+    return {**info, "sqrt_transform": False, "scvelo": scv.__version__}
+
+
+def _has_graph(adata, vkey: str) -> bool:
+    key = f"{vkey}_graph"
+    return key in adata.uns or key in adata.obsp
 
 
 def prepare(
@@ -291,6 +339,7 @@ def prepare(
     transition: bool = False,
     pseudotime: bool = False,
     spatial_key: str | None = None,
+    n_jobs: int | None = None,
 ) -> None:
     """One call at the end of a method wrapper.
 
@@ -305,6 +354,13 @@ def prepare(
     built just because ``obsm['spatial']`` exists.  Everything it does is
     recorded in ``uns['veloeval']['prepared']``.
 
+    Projection, transition matrix and pseudotime need a velocity graph, so they
+    run only in ``gene`` and ``latent`` space; ``embedding`` and ``scalar``
+    record them as skipped -- an embedding-space method keeps the
+    ``obsm['{vkey}_{basis}']`` it wrote.  A failed computation is recorded and
+    the call returns, so the metrics report ``missing_input`` downstream;
+    configuration errors raise.
+
     See :func:`build_neighbor_indices` for *n_neighbors*, *n_pcs*, *use_rep* and
     *overwrite_neighbors*.
 
@@ -312,18 +368,35 @@ def prepare(
     ----------
     reference : anndata.AnnData, optional
         A shared reference for every method on the dataset: all cells,
-        ``obsm['X_pca']`` and ``obsm['X_{basis}']``, the output of
-        :func:`scanpy.pp.neighbors` (``obsp['distances']``,
-        ``obsp['connectivities']``, ``uns['neighbors']``) and ``layers['Ms']``
-        computed on that graph.  The method's own neighbour graph, PCA,
-        embedding, velocity graph and projection are then replaced by ones
-        derived from the reference: its cells are looked up by name; if it
-        dropped some, the graph is rebuilt on their reference PCA with the
-        reference's parameters.  In gene space the velocity graph is rebuilt
-        with the reference ``Ms`` on the genes both have; in latent space with
-        the method's own ``layers['Ms']`` on the reference neighbours.  Only
-        *adata* changes, not the file it was read from.  Cannot be combined
-        with *overwrite_neighbors*.
+        ``obsm['X_{basis}']`` and the representation its graph was built on
+        (``obsm['X_pca']`` unless ``uns['neighbors']['params']['use_rep']``
+        says otherwise), the output of :func:`scanpy.pp.neighbors`
+        (``obsp['distances']``, ``obsp['connectivities']``,
+        ``uns['neighbors']``) and ``layers['Ms']`` computed on that graph.
+
+        First everything the method derived from its own graph or embedding
+        is dropped: every ``obsm['X_*']`` and ``obsm['{vkey}_*']``;
+        ``obsp['distances']``, ``['connectivities']``, ``['T_fwd']`` and
+        ``['{vkey}_*']``; every ``obs['{vkey}_*']`` column and
+        ``obs['root_cells']``, ``['end_points']``; ``uns['neighbors']`` and the
+        velocity graphs.  The method's own time, such as ``latent_time``,
+        stays.  Then every ``obsm['X_*']`` of the reference is copied and its
+        neighbour graph used -- cells are looked up by name; if the method
+        dropped some, the graph is rebuilt on the reference representation of
+        the rest with the reference's parameters.  The velocity graph is
+        recomputed: in gene space with the reference ``Ms`` on the gene set G
+        (the method's ``{vkey}_genes`` if any, with finite velocity, in the
+        reference), written to ``var['veloeval_genes']`` so that every
+        gene-space metric reads the same genes; in latent space with the
+        method's own ``layers['Ms']``.  Transition matrix and pseudotime are
+        then rebuilt on the reference graph too.  An embedding-space velocity
+        has no counterpart in the reference embedding, so its metrics become
+        ``missing_input``.  What was removed, copied and recomputed is recorded
+        under ``reference`` and ``{vkey}_graph``.  Only *adata* changes, not
+        the file it was read from.  Cannot be combined with
+        *overwrite_neighbors*.
+    n_jobs : int, optional
+        Passed to ``scvelo.tl.velocity_graph``.
     """
     if reference is not None and overwrite_neighbors:
         raise ValueError(
@@ -331,8 +404,8 @@ def prepare(
         )
     set_velocity_space(adata, space)
     if reference is not None:
-        dropped = _use_reference(adata, reference, basis)
-        adata.obsm.pop(f"{vkey}_{basis}", None)
+        removed = _clear_own_derivations(adata, vkey)
+        dropped, rep = _use_reference(adata, reference, basis)
     build_neighbor_indices(
         adata,
         n_neighbors=n_neighbors,
@@ -348,38 +421,59 @@ def prepare(
             {
                 "n_obs": int(reference.n_obs),
                 "dropped": int(dropped),
-                "graph": "rebuilt on reference PCA" if dropped else "copied",
+                "graph": f"rebuilt on reference {rep}" if dropped else "copied",
+                "removed": removed,
             },
         )
-        graph = _reference_velocity_graph(adata, reference, vkey, space)
+        try:
+            graph = _reference_velocity_graph(adata, reference, vkey, space, n_jobs)
+        except Exception as exc:  # noqa: BLE001 - recorded, not hidden
+            graph = {"error": f"{type(exc).__name__}: {exc}"}
         _record(adata, f"{vkey}_graph", graph)
 
     if spatial_key is not None:
         build_spatial_neighbors(adata, spatial_key=spatial_key)
 
-    try:
-        project_velocity(adata, basis=basis, vkey=vkey)
-    except Exception as exc:  # noqa: BLE001 - recorded, not hidden
-        _record(adata, f"{vkey}_{basis}", {"error": f"{type(exc).__name__}: {exc}"})
+    if space not in ("gene", "latent"):
+        why = f"no velocity graph in {space!r} space"
+    elif reference is not None and not _has_graph(adata, vkey):
+        why = "the reference velocity graph failed"
+    else:
+        why = None
+    graph_kw = {} if n_jobs is None else {"n_jobs": n_jobs}
+
+    if why:
+        _record(adata, f"{vkey}_{basis}", {"skipped": why})
+    else:
+        try:
+            project_velocity(adata, basis=basis, vkey=vkey, **graph_kw)
+        except Exception as exc:  # noqa: BLE001 - recorded, not hidden
+            _record(adata, f"{vkey}_{basis}", {"error": f"{type(exc).__name__}: {exc}"})
 
     if transition:
-        try:
-            import scvelo as scv
+        if why:
+            _record(adata, "T_fwd", {"skipped": why})
+        else:
+            try:
+                import scvelo as scv
 
-            adata.obsp["T_fwd"] = scv.utils.get_transition_matrix(adata, vkey=vkey)
-            _record(adata, "T_fwd", {"scvelo": scv.__version__})
-        except Exception as exc:  # noqa: BLE001
-            _record(adata, "T_fwd", {"error": f"{type(exc).__name__}: {exc}"})
+                adata.obsp["T_fwd"] = scv.utils.get_transition_matrix(adata, vkey=vkey)
+                _record(adata, "T_fwd", {"scvelo": scv.__version__})
+            except Exception as exc:  # noqa: BLE001
+                _record(adata, "T_fwd", {"error": f"{type(exc).__name__}: {exc}"})
 
     ptime = f"{vkey}_pseudotime"
     if pseudotime and ptime not in adata.obs:
-        try:
-            import scvelo as scv
+        if why:
+            _record(adata, ptime, {"skipped": why})
+        else:
+            try:
+                import scvelo as scv
 
-            scv.tl.velocity_pseudotime(adata, vkey=vkey)
-            _record(adata, ptime, {"scvelo": scv.__version__})
-        except Exception as exc:  # noqa: BLE001
-            _record(adata, ptime, {"error": f"{type(exc).__name__}: {exc}"})
+                scv.tl.velocity_pseudotime(adata, vkey=vkey)
+                _record(adata, ptime, {"scvelo": scv.__version__})
+            except Exception as exc:  # noqa: BLE001
+                _record(adata, ptime, {"error": f"{type(exc).__name__}: {exc}"})
 
 
 def _record(adata, field: str, params: dict[str, Any]) -> None:

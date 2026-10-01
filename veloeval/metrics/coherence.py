@@ -12,6 +12,7 @@ import pandas as pd
 
 from .._math import nanmean, rowwise_cosine
 from ..access import (
+    GENES_KEY,
     SPATIAL_KNN_KEY,
     get_labels,
     get_neighbor_indices,
@@ -188,8 +189,13 @@ def _scvelo_confidence(adata, indices, vkey):
     )
 
     keep_var = [c for c in (f"{vkey}_genes", "spearmans_score") if c in adata.var]
-    sub = ad.AnnData(obs=pd.DataFrame(index=adata.obs_names), var=adata.var[keep_var])
+    var = adata.var[keep_var]
     layer = adata.layers[vkey]
+    if GENES_KEY in adata.var:
+        genes = adata.var[GENES_KEY].to_numpy(dtype=bool)
+        var = var[genes].assign(**{f"{vkey}_genes": True})
+        layer = layer[:, genes]
+    sub = ad.AnnData(obs=pd.DataFrame(index=adata.obs_names), var=var)
     sub.layers[vkey] = layer.toarray() if hasattr(layer, "toarray") else np.asarray(layer)
     sub.obsp["distances"] = distances
     # scVelo then goes on to velocity_confidence_transition, which needs Ms and

@@ -25,6 +25,7 @@ from pandas.api.types import is_bool_dtype, is_numeric_dtype
 from .result import MissingInput, NotApplicable
 
 __all__ = [
+    "GENES_KEY",
     "KNN_KEY",
     "SPATIAL_KNN_KEY",
     "VeloSpace",
@@ -50,6 +51,11 @@ KNN_KEY = "veloeval_knn"
 #: ``obsm`` key holding the k nearest neighbours in *physical* space, same
 #: layout as :data:`KNN_KEY`.  Written by :func:`veloeval.build_spatial_neighbors`.
 SPATIAL_KNN_KEY = "veloeval_spatial_knn"
+
+#: ``var`` mask of the genes the velocity graph was built on, written by
+#: :func:`veloeval.prepare` in reference mode.  Gene-space metrics read only
+#: these, so that every view of one method uses one gene set.
+GENES_KEY = "veloeval_genes"
 
 #: Where a method's velocity vectors live.
 #:
@@ -91,7 +97,11 @@ def get_velocity(
     Genes carrying *any* NaN are dropped entirely rather than zero-filled:
     zero-filling injects false "no change" information and biases every
     distance-based metric.  Gene loss is a real cost of the method and is
-    reported separately by :func:`gene_coverage`.
+    reported separately by :func:`gene_coverage`.  With *drop_nan_genes* and a
+    ``var['veloeval_genes']`` mask -- written by
+    :func:`~veloeval.prepare.prepare` in reference mode -- only those genes are
+    returned, the ones the velocity graph was built on.  Without
+    *drop_nan_genes* every column is returned, in ``var`` order.
     """
     space = velocity_space(adata)
     if space not in allowed_spaces:
@@ -102,7 +112,10 @@ def get_velocity(
 
     for key in (vkey, f"{vkey}_S"):
         if key in adata.layers:
-            V = _dense(adata.layers[key])
+            V = adata.layers[key]
+            if drop_nan_genes and GENES_KEY in adata.var:
+                V = V[:, adata.var[GENES_KEY].to_numpy(dtype=bool)]
+            V = _dense(V)
             if drop_nan_genes:
                 V = V[:, ~np.isnan(V).any(axis=0)]
             if V.shape[1] == 0:

@@ -23,6 +23,7 @@ import pandas as pd
 
 from .._math import nanmean, rowwise_cosine, spearman, wrap_angle
 from ..access import (
+    GENES_KEY,
     get_embedding,
     get_labels,
     get_neighbor_indices,
@@ -227,7 +228,8 @@ def truth_cos(
         Velocity layer key in *reference*.
     genes : sequence of str, optional
         Score only these genes.  ``None`` uses every gene shared by the two
-        runs and valid in both.
+        runs and valid in both -- restricted to ``var['veloeval_genes']`` if
+        :func:`~veloeval.prepare` wrote it in reference mode.
 
     Returns
     -------
@@ -326,7 +328,9 @@ def gamma_corr(
         Per-gene degradation rate in *reference*.
     genes : sequence of str, optional
         Correlate only these genes.  ``None`` uses every gene shared by the
-        two runs with a rate on both sides.
+        two runs with a rate on both sides -- restricted to
+        ``var['veloeval_genes']`` if :func:`~veloeval.prepare` wrote it in
+        reference mode.
 
     Returns
     -------
@@ -380,6 +384,8 @@ def gamma_corr(
 
 
 def _shared_genes(adata, reference, genes):
+    if genes is None and GENES_KEY in adata.var:
+        genes = adata.var_names[adata.var[GENES_KEY].to_numpy(dtype=bool)]
     shared = adata.var_names.intersection(reference.var_names)
     if genes is not None:
         shared = shared.intersection(pd.Index(genes))

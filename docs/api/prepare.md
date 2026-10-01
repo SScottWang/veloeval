@@ -36,9 +36,28 @@ adata = ad.read_h5ad(velocity_path)            # one method's output
 ve.prepare(adata, space="gene", basis="umap", reference=ref)
 ```
 
-A method that dropped cells gets its graph rebuilt on the reference PCA of the
-cells it kept, with the reference's parameters. What was copied, rebuilt and
-recomputed is recorded under `reference`, `neighbors` and `velocity_graph` in
+Before anything is copied, whatever the method derived from its own graph or
+embedding is dropped — its embeddings, projections, transition matrix,
+`velocity_*` columns such as its pseudotime, and its velocity graph — so no
+metric can read a stale field. Its own time (`latent_time`, `fit_t`) stays.
+Then every `obsm['X_*']` of the reference is copied. A method that dropped
+cells gets its graph rebuilt on the reference representation of the cells it
+kept (`X_pca`, or the reference's `use_rep`), with the reference's parameters.
+
+In gene space the velocity graph is built on one gene set per method — the
+genes it scored (`var['velocity_genes']` if present), with finite velocity,
+that the reference has — and that set is written to `var['veloeval_genes']`.
+Every gene-space metric then reads only those genes, so a method's velocity
+graph, `field_constancy`, `icvcoh(basis=None)` and `velocity_consistency` are
+on the same genes. The set is not unified across methods: which genes a method
+can fit is part of what is being compared.
+
+Only gene and latent velocities are projected; an embedding-space velocity
+lives in the method's own embedding and has no counterpart in the reference
+one, so its embedding metrics become `missing_input`. A failed velocity graph
+is recorded, not raised, and leaves the projection, transition matrix and
+pseudotime skipped. What was removed, copied, rebuilt and recomputed is
+recorded under `reference`, `neighbors` and `velocity_graph` in
 `adata.uns["veloeval"]["prepared"]`.
 
 ```{eval-rst}

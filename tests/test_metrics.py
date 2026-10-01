@@ -1509,7 +1509,9 @@ def test_reference_mode_puts_methods_on_one_footing(reference):
 
     rec = m1.uns["veloeval"]["prepared"]
     assert rec["neighbors"]["source"] == "reference"
-    assert rec["reference"] == {"n_obs": 300, "dropped": 0, "graph": "copied"}
+    assert {k: v for k, v in rec["reference"].items() if k != "removed"} == {
+        "n_obs": 300, "dropped": 0, "graph": "copied",
+    }
     assert rec["velocity_graph"]["n_genes"] == 40
     assert "veloeval_Ms" not in m1.layers
 
@@ -1597,3 +1599,124 @@ def test_reference_mode_errors(reference):
 
     with pytest.raises(ValueError, match="overwrite_neighbors"):
         ve.prepare(m.copy(), reference=ref, overwrite_neighbors=True)
+
+
+def test_reference_mode_clears_the_method_s_own_derivations(reference):
+    ref, X, V = reference
+    ref = ref.copy()
+    ref.obsm["X_tsne"] = np.random.default_rng(5).normal(size=(300, 2))
+    m = _method(ref, X, V, 1, 8)
+    m.obs["velocity_pseudotime"] = 0.5
+    m.obs["latent_time"] = 0.25
+    m.obsp["T_fwd"] = np.eye(300)
+    m.obsm["X_tsne"] = np.zeros((300, 2))
+    m.obsm["X_own"] = np.zeros((300, 3))
+    m.obsm["velocity_tsne"] = np.ones((300, 2))
+    ve.prepare(m, reference=ref, pseudotime=True, transition=True)
+
+    assert m.obs["velocity_pseudotime"].nunique() > 1
+    assert (m.obs["latent_time"] == 0.25).all()
+    assert not np.allclose(m.obsp["T_fwd"].toarray(), np.eye(300))
+    np.testing.assert_array_equal(m.obsm["X_tsne"], ref.obsm["X_tsne"])
+    assert "X_own" not in m.obsm and "velocity_tsne" not in m.obsm
+    removed = m.uns["veloeval"]["prepared"]["reference"]["removed"]
+    for key in ("obs['velocity_pseudotime']", "obsp['T_fwd']", "obsm['X_tsne']",
+                "obsm['velocity_tsne']", "uns['velocity_graph']", "uns['neighbors']"):
+        assert key in removed
+    assert "obs['latent_time']" not in removed
+
+
+def test_reference_mode_records_a_failed_velocity_graph(reference, monkeypatch):
+    import scvelo as scv
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    ref, X, V = reference
+    m = _method(ref, X, V, 1, 8)
+    monkeypatch.setattr(scv.tl, "velocity_graph", boom)
+    ve.prepare(m, reference=ref, transition=True, pseudotime=True)
+    rec = m.uns["veloeval"]["prepared"]
+    assert rec["velocity_graph"] == {"error": "RuntimeError: boom"}
+    for key in ("velocity_umap", "T_fwd", "velocity_pseudotime"):
+        assert "failed" in rec[key]["skipped"]
+    for basis in ("umap", None):
+        res = M.cbdir(m, label_key="clusters", cluster_edges=EDGES3, basis=basis)
+        assert res.status == "missing_input"
+
+
+@pytest.mark.parametrize("space", ["embedding", "scalar"])
+def test_prepare_builds_no_velocity_graph_outside_gene_and_latent(reference, space):
+    ref, X, V = reference
+    m = ref.copy()
+    m.layers["velocity"] = V.astype(np.float64)
+    m.obsm["velocity_umap"] = np.ones((300, 2))
+    ve.prepare(m, space=space, transition=True, pseudotime=True)
+    rec = m.uns["veloeval"]["prepared"]
+    for key in ("velocity_umap", "T_fwd", "velocity_pseudotime"):
+        assert rec[key] == {"skipped": f"no velocity graph in {space!r} space"}
+    assert "velocity_graph" not in m.uns and "T_fwd" not in m.obsp
+    np.testing.assert_array_equal(m.obsm["velocity_umap"], 1.0)
+
+
+def test_reference_mode_rebuilds_on_the_reference_s_use_rep(reference):
+    import scanpy as sc
+
+    ref, X, V = reference
+    ref = ref.copy()
+    ref.obsm["X_other"] = np.random.default_rng(6).normal(size=(300, 5))
+    del ref.obsm["X_pca"]
+    sc.pp.neighbors(ref, n_neighbors=12, use_rep="X_other")
+    keep = np.sort(np.random.default_rng(4).choice(300, 270, replace=False))
+    m = _method(ref, X, V, 1, 8)[keep].copy()
+    ve.prepare(m, reference=ref)
+    assert m.uns["veloeval"]["prepared"]["reference"]["graph"] == (
+        "rebuilt on reference X_other"
+    )
+    sub = ref[keep].copy()
+    p = sub.uns["neighbors"]["params"]
+    sc.pp.neighbors(
+        sub, n_neighbors=p["n_neighbors"], use_rep="X_other", method=p["method"],
+        metric=p["metric"], random_state=p["random_state"],
+    )
+    np.testing.assert_array_equal(m.obsm[ve.KNN_KEY], ve.build_neighbor_indices(sub))
+
+    del ref.obsm["X_other"]
+    with pytest.raises(ValueError, match="X_other"):
+        ve.prepare(_method(ref, X, V, 1, 8), reference=ref)
+
+
+def test_reference_mode_reads_one_gene_set(reference, monkeypatch):
+    import scvelo as scv
+
+    ref, X, V = reference
+    widths = []
+    graph = scv.tl.velocity_graph
+
+    def spy(adata, *args, **kwargs):
+        widths.append(adata.n_vars)
+        return graph(adata, *args, **kwargs)
+
+    def scores(m):
+        kw = dict(label_key="clusters", cluster_edges=EDGES3, basis=None)
+        return [
+            M.field_constancy(m).value,
+            M.icvcoh(m, label_key="clusters", basis=None).value,
+            M.velocity_consistency(m).value,
+            M.cbdir(m, **kw).value,
+        ]
+
+    runs = []
+    for wild in (False, True):
+        m = _method(ref, X, V, 1, 8)
+        m.var["velocity_genes"] = m.var_names != "g0"
+        if wild:
+            m.layers["velocity"][:, 0] = 1e3
+        monkeypatch.setattr(scv.tl, "velocity_graph", spy)
+        ve.prepare(m, reference=ref)
+        monkeypatch.undo()
+        assert m.var["veloeval_genes"].sum() == 39 and not m.var["veloeval_genes"]["g0"]
+        assert "veloeval_Ms" not in m.layers
+        runs.append(scores(m))
+    assert widths == [39, 39]
+    np.testing.assert_allclose(runs[0], runs[1], rtol=1e-6)
