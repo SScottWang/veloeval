@@ -85,6 +85,11 @@ neighbourhood, embedding and `Ms`; it writes what it did into
 and is not comparable — a wrong number is worse than a missing one. Declare it
 via `ve.prepare(..., space=...)` or `ve.set_velocity_space(adata, "latent")`.
 
+**ConstVelo probes the evaluation.** `ve.constvelo(adata, start=..., end=...)`
+gives every cell one unit gene-space velocity, from one cluster's mean `Ms` to
+another's. With the velocity fixed, scores that change across neighbour graphs
+or layouts change because of the evaluation; it is not a method to rank.
+
 ## Deliberately not here
 
 Orchestration (assembling rows, aggregating seeds, runtime and memory),

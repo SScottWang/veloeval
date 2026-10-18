@@ -75,6 +75,10 @@ Coherence says nothing about whether the field points the *right* way — a
 confidently wrong field scores high. Read it next to the direction metrics,
 never instead of them.
 
+To see how much of a score comes from the evaluation rather than the velocity,
+{func}`~veloeval.constvelo` gives every cell the same velocity — see
+{doc}`api/constvelo`.
+
 ## Every result carries a status
 
 A metric returns a {class}`~veloeval.result.MetricResult`, never a bare float, because

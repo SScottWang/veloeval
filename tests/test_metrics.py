@@ -1720,3 +1720,74 @@ def test_reference_mode_reads_one_gene_set(reference, monkeypatch):
         runs.append(scores(m))
     assert widths == [39, 39]
     np.testing.assert_allclose(runs[0], runs[1], rtol=1e-6)
+
+
+def _counts(rng, n=120, g=30):
+    import anndata as ad
+
+    lab = np.repeat(["A", "B", "C"], n // 3)
+    lam = rng.uniform(1, 5, size=(n, g)) * np.where(lab[:, None] == "C", 3.0, 1.0)
+    a = ad.AnnData(
+        X=rng.poisson(lam).astype(np.float32),
+        obs=pd.DataFrame({"clusters": pd.Categorical(lab)},
+                         index=[f"c{i}" for i in range(n)]),
+        var=pd.DataFrame(index=[f"g{j}" for j in range(g)]),
+    )
+    a.layers["spliced"] = a.X.copy()
+    a.layers["unspliced"] = rng.poisson(lam / 2).astype(np.float32)
+    return a
+
+
+def test_constvelo_is_one_unit_vector_from_start_to_end(rng):
+    a = _counts(rng)
+    Ms = rng.normal(size=a.shape)
+    a.layers["Ms"] = Ms
+    c = ve.constvelo(a, start="A", end="C")
+    lab = a.obs["clusters"].to_numpy()
+    want = Ms[lab == "C"].mean(0) - Ms[lab == "A"].mean(0)
+    np.testing.assert_allclose(c, want / np.linalg.norm(want))
+    V = a.layers["velocity"]
+    assert V.dtype == np.float32 and V.shape == a.shape
+    np.testing.assert_array_equal(V, np.tile(c.astype(np.float32), (a.n_obs, 1)))
+    assert a.var["velocity_genes"].all() and ve.velocity_space(a) == "gene"
+    rec = a.uns["veloeval"]["constvelo"]
+    assert rec["start"] == "A" and "n_neighbors" not in rec
+    assert "X_pca" not in a.obsm
+
+
+def test_constvelo_builds_ms_with_the_given_graph(rng):
+    pytest.importorskip("scvelo")
+    a = _counts(rng)
+    ve.constvelo(a, start="A", end="C", n_pcs=10, n_neighbors=12)
+    assert a.obsm["X_pca"].shape[1] == 10
+    assert a.uns["neighbors"]["params"]["n_neighbors"] == 12
+    rec = a.uns["veloeval"]["constvelo"]
+    assert (rec["n_pcs"], rec["n_neighbors"]) == (10, 12)
+    assert "Ms" in a.layers
+
+
+def test_constvelo_errors(rng):
+    a = _counts(rng)
+    a.layers["Ms"] = np.ones(a.shape)
+    with pytest.raises(ValueError, match="'Z'"):
+        ve.constvelo(a, start="A", end="Z")
+    with pytest.raises(ValueError, match="coincide"):
+        ve.constvelo(a, start="A", end="B")
+    with pytest.raises(KeyError, match="cluster"):
+        ve.constvelo(a, start="A", end="C", label_key="cluster")
+    with pytest.raises(KeyError, match="other"):
+        ve.constvelo(a, start="A", end="C", xkey="other")
+
+
+def test_direction_scores_ignore_the_length_of_a_constant_velocity(reference):
+    ref, X, V = reference
+    c = ve.constvelo(ref.copy(), start="A", end="C")
+    out = []
+    for s in (1.0, 0.125, 8.0):
+        m = _method(ref, X, V, 1, 8)
+        m.layers["velocity"] = np.tile((s * c).astype(np.float32), (m.n_obs, 1))
+        ve.prepare(m, reference=ref)
+        kw = dict(label_key="clusters", cluster_edges=EDGES3)
+        out.append([M.cbdir(m, **kw).value, M.cbdir(m, **kw, basis=None).value,
+                    M.cbvcoh(m, **kw).value, M.icvcoh(m, label_key="clusters").value])
+    assert out[0] == out[1] == out[2]
