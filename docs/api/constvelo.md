@@ -22,24 +22,15 @@ for k, ref in references.items():                      # same c for every k
     ve.prepare(m, reference=ref)
 ```
 
-On scVelo's pancreas data — 2000 HVGs, Ductal to Beta, the dataset's own UMAP
-held fixed, kNN rebuilt with $k = 15, 30, 50$ on 30 PCs — the projected PCA
-arrow is one vector everywhere, while the arrows scVelo projects into the UMAP,
-and the scores, change with the graph alone. Pancreas branches into four
-lineages, so one direction is an idealised example, right only roughly.
+On scVelo's pancreas data — 2000 HVGs, Ductal to Beta, 30 PCs and 30
+neighbours: in PCA every cell carries the same arrow, while on the UMAP the
+arrows scVelo projects through the velocity graph, and the streamlines, bend
+with the neighbourhood. Pancreas branches into four lineages, so one direction
+is an idealised example, right only roughly.
 
 ![ConstVelo on pancreas](../_static/constvelo_pancreas.png)
 
-| k | CBDir (UMAP) | CBDir (gene) | CBVCoh (UMAP) | ICVCoh (UMAP) |
-| --- | --- | --- | --- | --- |
-| 15 | 0.473 | 0.100 | 0.870 | 0.809 |
-| 30 | 0.476 | 0.136 | 0.882 | 0.846 |
-| 50 | 0.466 | 0.152 | 0.873 | 0.835 |
-
-Rescaling the velocity leaves the four scores unchanged: bit for bit at
-$\times 0.125$ and $\times 8$, to within $2 \times 10^{-7}$ at $\times 0.1$ and
-$\times 10$, where the float32 velocity itself is rounded. The figure and the
-table come from `docs/_scripts/constvelo_pancreas.py`.
+The figure comes from `docs/_scripts/constvelo_pancreas.py`.
 
 ```{eval-rst}
 .. autofunction:: veloeval.constvelo
