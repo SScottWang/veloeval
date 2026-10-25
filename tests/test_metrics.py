@@ -1905,7 +1905,7 @@ def test_pl_cbturn_draws_what_cbturn_scores(rng):
     const = a.copy()
     const.layers["velocity"] = np.tile(V[0], (a.n_obs, 1))
     ax = ve.pl.cbturn(const, **TURN)
-    middle = matplotlib.colormaps["viridis"](0.5)
+    middle = matplotlib.colormaps["coolwarm"](0.5)
     for arrow in [p for p in ax.patches if isinstance(p, FancyArrowPatch)]:
         assert np.allclose(arrow.get_facecolor(), middle)
     plt.close("all")

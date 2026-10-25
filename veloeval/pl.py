@@ -140,9 +140,9 @@ def cbturn(
     Each cell type is a node at the median of its cells in ``obsm['X_{basis}']``,
     sized by its number of cells, and each of *cluster_edges* an arrow from
     source to target, as in scVelo's PAGA plot.  The arrow's colour is the
-    edge's turning part (see :func:`cbturn_parts`) on viridis: yellow where the
-    velocity on the edge turns with it, purple where against it, the green
-    middle where nothing on the edge sets it apart from the others.  The
+    edge's turning part (see :func:`cbturn_parts`): red where the velocity on
+    the edge turns with it, blue where against it, grey where nothing on the
+    edge sets it apart from the others.  The
     embedding only places the nodes: the scores are computed in gene or latent
     space, and an arrow's angle in the plot says nothing about the velocity.
 
@@ -153,9 +153,10 @@ def cbturn(
     basis : str, default: ``"umap"``
         Embedding that places the nodes.
     vmax : float, optional
-        Turning part at full colour.  ``None`` uses the largest an edge
-        could reach, :math:`\lVert \hat d_e - \bar d \rVert^2` -- velocity on
-        every edge exactly along it -- so that colours compare across methods.
+        Turning part at full colour.  ``None`` uses the largest on any edge,
+        so the colours span this run; pass one value to compare runs.  A run
+        with no turning at all falls back to the largest an edge could reach,
+        :math:`\lVert \hat d_e - \bar d \rVert^2`, and stays grey.
     ax : matplotlib.axes.Axes, optional
         Drawn into if given, otherwise a new figure.
     title : str, optional
@@ -174,7 +175,7 @@ def cbturn(
         ve.pl.cbturn(adata, ref, label_key="clusters", cluster_edges=edges)
     """
     import matplotlib.pyplot as plt
-    from matplotlib import colormaps
+    from matplotlib import colormaps, patheffects
     from matplotlib.colors import Normalize
     from matplotlib.patches import FancyArrowPatch
 
@@ -187,8 +188,11 @@ def cbturn(
     colors = _label_colors(adata, label_key)
     if vmax is None:
         Dc = D - D.mean(axis=0)
-        vmax = float((Dc * Dc).sum(axis=1).max())
-    cmap = colormaps["viridis"]
+        reach = float((Dc * Dc).sum(axis=1).max())
+        vmax = float(np.abs(turn).max())
+        if vmax <= 1e-6 * reach:
+            vmax = reach
+    cmap = colormaps["coolwarm"]
     norm = Normalize(-vmax, vmax)
 
     if ax is None:
@@ -205,6 +209,7 @@ def cbturn(
             where[src], where[tgt], arrowstyle="-|>", mutation_scale=16,
             color=cmap(norm(t)), lw=2.6, zorder=2,
             shrinkA=np.sqrt(size[src]) / 2 + 1, shrinkB=np.sqrt(size[tgt]) / 2 + 1,
+            path_effects=[patheffects.withStroke(linewidth=4, foreground="0.35")],
         ))
     for n in nodes:
         ax.scatter(*where[n], s=size[n], color=colors.get(n, "0.5"),

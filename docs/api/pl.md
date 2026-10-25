@@ -51,11 +51,11 @@ ve.pl.cbturn_parts(adata, ref, label_key="clusters", cluster_edges=edges)
 
 `cbturn` puts the same turning parts on the differentiation topology, as in
 scVelo's PAGA plot: each cell type a node at the median of its cells in the
-UMAP, each edge an arrow from source to target, coloured on viridis: yellow
-where the velocity turns with the edge, purple where against it, the green
-middle where nothing sets the edge apart.
-Full colour is the most an edge could reach, so colours compare across
-methods. The UMAP only places the nodes; the scores are computed in gene space.
+UMAP, each edge an arrow from source to target, red where the velocity turns
+with the edge, blue where against it, grey where nothing sets the edge apart.
+The colour bar spans the run's own largest edge; pass `vmax` to put several
+runs on one scale. The UMAP only places the nodes; the scores are computed in
+gene space.
 
 ```python
 ve.pl.cbturn(adata, ref, label_key="clusters", cluster_edges=edges)
