@@ -3,8 +3,8 @@
 scVelo's dynamical and deterministic velocities, ConstVelo (Ductal to Beta) and
 the reversed dynamical velocity, each put on one reference (2000 HVGs, 30 PCs,
 30 neighbours) with ``ve.prepare(reference=...)``.  Writes
-``cbturn_pancreas_compass.png`` and ``cbturn_pancreas_parts.png`` next to the
-docs' other static files::
+``cbturn_pancreas_topology.png``, ``cbturn_pancreas_edges.png`` and
+``cbturn_pancreas_parts.png`` next to the docs' other static files::
 
     python docs/_scripts/cbturn_pancreas.py [raw_pancreas.h5ad]
 
@@ -81,10 +81,15 @@ def main(path=None):
     kw = dict(label_key=LABEL, cluster_edges=EDGES)
     OUT.mkdir(exist_ok=True)
 
-    fig, axes = plt.subplots(1, 3, figsize=(14, 5))
-    for ax, name in zip(axes, ["scVelo dynamical", "ConstVelo", "reversed dynamical"]):
-        ve.pl.cbturn(runs[name], ref, ax=ax, title=name, velocity_scale=2, **kw)
-    fig.savefig(OUT / "cbturn_pancreas_compass.png", dpi=110, bbox_inches="tight")
+    names = ["scVelo dynamical", "ConstVelo", "reversed dynamical"]
+    fig, axes = plt.subplots(1, 3, figsize=(18, 4.5))
+    for ax, name in zip(axes, names):
+        ve.pl.cbturn(runs[name], ref, ax=ax, title=name, legend=ax is axes[-1], **kw)
+    fig.savefig(OUT / "cbturn_pancreas_topology.png", dpi=100, bbox_inches="tight")
+
+    ax = ve.pl.cbturn_parts(runs["scVelo dynamical"], ref, title="scVelo dynamical",
+                            **kw)
+    ax.figure.savefig(OUT / "cbturn_pancreas_edges.png", dpi=110, bbox_inches="tight")
 
     ax = ve.pl.cbturn_parts(runs, ref, **kw)
     ax.figure.savefig(OUT / "cbturn_pancreas_parts.png", dpi=110, bbox_inches="tight")

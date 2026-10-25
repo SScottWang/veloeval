@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .access import get_labels, get_velocity
+from .access import get_embedding, get_labels, get_velocity
 from .metrics import field_constancy as _field_constancy
 from .metrics.direction import _edge_means, _edge_turning
 
@@ -29,9 +29,10 @@ def field_constancy(
     to its number of cells, stacked by cell type with *label_key*.  The arrow is
     :func:`~veloeval.metrics.field_constancy` :math:`R` on the scale of the
     dashed circle, :math:`R = 1`; it is also the mean of every cell's
-    :math:`\cos\theta`.  The grey band is where unit vectors drawn at random
-    in the same number of features fall (±2 sd): in gene space nearly all at
-    90°, so cells there point nowhere in particular.
+    :math:`\cos\theta`.  The grey band is where directions drawn at random in
+    as many features as the velocity has would fall (±2 sd).  With a thousand
+    genes it is a few degrees either side of 90°, so cells in it point no more
+    along the mean than noise would.
 
     Parameters
     ----------
@@ -48,7 +49,7 @@ def field_constancy(
     title : str, optional
         Placed above, followed by the value of :math:`R`.
     legend : bool, default: True
-        Cell-type legend, with *label_key*.
+        Legend at the side: the cell types and the random band.
 
     Returns
     -------
@@ -100,7 +101,8 @@ def field_constancy(
 
     sd = 2 / np.sqrt(n_features)
     ax.fill_between(np.linspace(np.pi / 2 - sd, np.pi / 2 + sd, 20), 0, 1,
-                    color="0.6", alpha=0.35, linewidth=0, zorder=0)
+                    color="0.6", alpha=0.35, linewidth=0, zorder=0,
+                    label="random directions (±2 sd)")
     ax.plot(np.linspace(0, np.pi, 100), np.ones(100), ls="--", color="k", lw=0.8)
     ax.annotate("", xy=(0, R), xytext=(0, 0),
                 arrowprops=dict(arrowstyle="-|>", color="k", lw=2))
@@ -111,13 +113,11 @@ def field_constancy(
         spine.set_visible(False)
     ax.set_xticks(np.radians([0, 45, 90, 135, 180]))
     ax.grid(color="0.85", lw=0.5)
-    ax.text(np.pi / 2 + sd + 0.03, 0.55, f"random,\n{n_features}\nfeatures",
-            ha="right", va="center", fontsize=6.5, color="0.4")
     head = f"{title}\n" if title else ""
     ax.set_title(f"{head}R = {R:.2f}", fontsize=10, pad=12)
-    if label_key is not None and legend:
-        ax.legend(loc="upper center", bbox_to_anchor=(0.5, 0.02), frameon=False,
-                  fontsize=7, ncol=4)
+    if legend:
+        ax.legend(loc="center left", bbox_to_anchor=(1.12, 0.35), frameon=False,
+                  fontsize=7)
     return ax
 
 
@@ -127,38 +127,41 @@ def cbturn(
     *,
     label_key: str,
     cluster_edges,
+    basis: str = "umap",
     xkey: str = "Ms",
     vkey: str = "velocity",
-    velocity_scale: float | None = None,
+    vmax: float | None = None,
     ax=None,
     title: str | None = None,
+    legend: bool = True,
 ):
-    r"""Each cluster edge's own direction against the velocity on it.
+    r"""CBTurn edge by edge, on the differentiation topology.
 
-    What :func:`~veloeval.metrics.cbturn` regresses, in the plane that holds
-    most of the spread of the edge directions.  For every edge, a grey arrow
-    for :math:`\hat d_e - \bar d`, its direction minus the mean over edges, and
-    a coloured one, in the target cluster's colour, for
-    :math:`\bar u_e - \bar u`, the mean unit velocity of its boundary cells
-    minus the mean over edges.  The coloured arrows are lengthened by
-    *velocity_scale*, printed in the title: at that scale, matching arrows
-    are a slope of 1 over the scale.  A constant field leaves no coloured
-    arrow, a reversed one turns them all round.  The fraction of the spread of the
-    edge directions the plane holds is printed below; the velocity can also
-    have parts outside it.
+    Each cell type is a node at the median of its cells in ``obsm['X_{basis}']``,
+    sized by its number of cells, and each of *cluster_edges* an arrow from
+    source to target, as in scVelo's PAGA plot.  The arrow's colour is the
+    edge's turning part (see :func:`cbturn_parts`): blue where the velocity on
+    the edge turns with it, red where against it, grey where nothing on the
+    edge sets it apart from the others.  The embedding only places the
+    nodes: the scores are computed in gene or latent space, and an arrow's
+    angle in the plot says nothing about the velocity.
 
     Parameters
     ----------
     adata, reference, label_key, cluster_edges, xkey, vkey
         As for :func:`~veloeval.metrics.cbturn`.
-    velocity_scale : float, optional
-        Factor on the coloured arrows.  ``None`` picks the whole number that
-        brings their root-mean-square length nearest the grey arrows'; pass
-        one value to compare methods.
+    basis : str, default: ``"umap"``
+        Embedding that places the nodes.
+    vmax : float, optional
+        Turning part at full colour.  ``None`` uses the largest an edge
+        could reach, :math:`\lVert \hat d_e - \bar d \rVert^2` -- velocity on
+        every edge exactly along it -- so that colours compare across methods.
     ax : matplotlib.axes.Axes, optional
         Drawn into if given, otherwise a new figure.
     title : str, optional
         Placed above, followed by the value of CBTurn.
+    legend : bool, default: True
+        Cell types at the side.
 
     Returns
     -------
@@ -171,55 +174,56 @@ def cbturn(
         ve.pl.cbturn(adata, ref, label_key="clusters", cluster_edges=edges)
     """
     import matplotlib.pyplot as plt
+    from matplotlib.colors import LinearSegmentedColormap, Normalize
+    from matplotlib.patches import FancyArrowPatch
 
     names, U, cells, D = _edge_turning(
         adata, reference, label_key, cluster_edges, xkey, vkey
     )
-    B = _edge_means(U, cells)
-    Dc, Bc = D - D.mean(axis=0), B - B.mean(axis=0)
-    value = float((Bc * Dc).sum() / (Dc * Dc).sum())
-    _, sv, Vt = np.linalg.svd(Dc, full_matrices=False)
-    plane = Vt[:2].T
-    held = float((sv[:2] ** 2).sum() / (sv**2).sum())
-    d2, b2 = Dc @ plane, Bc @ plane
-
-    longest_d = np.linalg.norm(d2, axis=1).max()
-    rms_d, rms_b = np.sqrt((d2**2).sum()), np.sqrt((b2**2).sum())
-    if velocity_scale is None:
-        velocity_scale = (
-            max(1.0, float(np.round(rms_d / rms_b))) if rms_b > 1e-9 * rms_d else 1.0
-        )
-    b2 = b2 * velocity_scale
-
+    glob, turn, value = _edge_parts(U, cells, D)
+    emb = get_embedding(adata, basis)[:, :2]
+    labels = get_labels(adata, label_key)
     colors = _label_colors(adata, label_key)
+    if vmax is None:
+        Dc = D - D.mean(axis=0)
+        vmax = float((Dc * Dc).sum(axis=1).max())
+    cmap = LinearSegmentedColormap.from_list(
+        "turn", ["#67001f", "#d6604d", "#c8c8c8", "#4393c3", "#053061"]
+    )
+    norm = Normalize(-vmax, vmax)
+
     if ax is None:
-        _, ax = plt.subplots(figsize=(4.2, 4.2))
-    lim = 1.35 * max(longest_d, np.linalg.norm(b2, axis=1).max())
-    for name, d, b in zip(names, d2, b2):
-        color = colors.get(name.split(" -> ")[1], "C0")
-        ax.annotate("", xy=d, xytext=(0, 0), arrowprops=dict(
-            arrowstyle="-|>", color="0.8", lw=4, shrinkA=0, shrinkB=0))
-        if np.linalg.norm(b) > 1e-6 * longest_d:
-            ax.annotate("", xy=b, xytext=(0, 0), arrowprops=dict(
-                arrowstyle="-|>", color=color, lw=1.8, shrinkA=0, shrinkB=0))
-        ax.text(*(d * 1.08), name.replace(" -> ", " → "), fontsize=6.5,
-                ha="left" if d[0] >= 0 else "right", va="center", color="0.3")
-    ax.axhline(0, color="0.9", lw=0.6, zorder=0)
-    ax.axvline(0, color="0.9", lw=0.6, zorder=0)
-    ax.set_xlim(-lim, lim)
-    ax.set_ylim(-lim, lim)
-    ax.set_aspect("equal")
+        _, ax = plt.subplots(figsize=(5.5, 4.2))
+    ax.scatter(*emb.T, c=[colors.get(x, "0.8") for x in labels], s=4, lw=0,
+               alpha=0.12, rasterized=True)
+    nodes = sorted({n for e in names for n in e.split(" -> ")},
+                   key=list(colors).index)
+    where = {n: np.median(emb[labels == n], axis=0) for n in nodes}
+    size = {n: 60 + 240 * np.sqrt((labels == n).mean()) for n in nodes}
+    for name, t in zip(names, turn):
+        src, tgt = name.split(" -> ")
+        ax.add_patch(FancyArrowPatch(
+            where[src], where[tgt], arrowstyle="-|>", mutation_scale=16,
+            color=cmap(norm(t)), lw=2.6, zorder=2,
+            shrinkA=np.sqrt(size[src]) / 2 + 1, shrinkB=np.sqrt(size[tgt]) / 2 + 1,
+        ))
+    for n in nodes:
+        ax.scatter(*where[n], s=size[n], color=colors.get(n, "0.5"),
+                   edgecolor="white", linewidth=1, zorder=3, label=n)
     ax.set_xticks([])
     ax.set_yticks([])
+    ax.set_aspect("equal", adjustable="datalim")
     for spine in ax.spines.values():
         spine.set_visible(False)
+    bar = plt.colorbar(plt.cm.ScalarMappable(norm, cmap), ax=ax, shrink=0.5,
+                       pad=0.02, location="left")
+    bar.set_label("turning part on the edge", fontsize=7)
+    bar.ax.tick_params(labelsize=6)
     head = f"{title}\n" if title else ""
-    ax.set_title(f"{head}CBTurn = {_fmt(value)}, velocity × {velocity_scale:g}",
-                 fontsize=10)
-    ax.text(0.5, -0.02, "grey: edge direction; colour: velocity; both minus "
-            f"their mean over edges\nplane holds {held:.0%} of the edge "
-            "directions' spread", transform=ax.transAxes, ha="center", va="top",
-            fontsize=6.5, color="0.4")
+    ax.set_title(f"{head}CBTurn = {_fmt(value)}", fontsize=10)
+    if legend:
+        ax.legend(loc="center left", bbox_to_anchor=(1.0, 0.5), frameon=False,
+                  fontsize=7, markerscale=0.5)
     return ax
 
 
@@ -232,32 +236,35 @@ def cbturn_parts(
     xkey: str = "Ms",
     vkey: str = "velocity",
     ax=None,
+    title: str | None = None,
 ):
-    r"""Split a centroid CBDir into a global and a turning part, per run.
+    r"""Split a centroid CBDir into a global and a turning part.
 
-    Averaged over edges, the cosine-like score
+    The agreement of each edge's mean boundary velocity with its direction,
     :math:`\langle \bar u_e, \hat d_e \rangle` -- a version of
-    :func:`~veloeval.metrics.cbdir` aimed at the target cluster's mean -- is
-    exactly
+    :func:`~veloeval.metrics.cbdir` aimed at the target cluster's mean --
+    splits into a turning part :math:`\langle \bar u_e - \bar u,\;
+    \hat d_e - \bar d \rangle`, what the edge's velocity shares with what sets
+    the edge apart from the others, and a global part, the rest.  Averaged
+    over edges the global part is :math:`\langle \bar u, \bar d \rangle`, one
+    direction shared by every edge, and the turning part is
+    :func:`~veloeval.metrics.cbturn` up to a factor of the dataset.  A
+    constant field has no turning part on any edge.
 
-    .. math::
-
-        \langle \bar u, \bar d \rangle \;+\;
-        \tfrac{1}{E} \sum_e \langle \bar u_e - \bar u,\; \hat d_e - \bar d \rangle,
-
-    one direction shared by every edge plus what changes from edge to edge.
-    Each run is a bar: the global part in grey, the turning part in colour,
-    stacked; :func:`~veloeval.metrics.cbturn` is printed at the end.  A
-    constant field has no coloured part.
+    Given one AnnData, a bar per edge, the turning part in the target
+    cluster's colour.  Given several by name, a bar per run with both parts
+    averaged over edges and CBTurn at the end.  The global part is grey.
 
     Parameters
     ----------
-    runs : dict of str to anndata.AnnData
-        One prepared AnnData per method, by name, drawn top to bottom.
+    runs : anndata.AnnData or dict of str to anndata.AnnData
+        One prepared AnnData, or one per method, drawn top to bottom.
     reference, label_key, cluster_edges, xkey, vkey
         As for :func:`~veloeval.metrics.cbturn`.
     ax : matplotlib.axes.Axes, optional
         Drawn into if given, otherwise a new figure.
+    title : str, optional
+        Placed above; for one AnnData, followed by the value of CBTurn.
 
     Returns
     -------
@@ -267,40 +274,59 @@ def cbturn_parts(
     --------
     .. code-block:: python
 
+        ve.pl.cbturn_parts(adata, ref, label_key="clusters", cluster_edges=edges)
         runs = {"scVelo": a, "ConstVelo": c}
         ve.pl.cbturn_parts(runs, ref, label_key="clusters", cluster_edges=edges)
     """
     import matplotlib.pyplot as plt
 
+    single = not isinstance(runs, dict)
     rows = []
-    for name, adata in runs.items():
-        _, U, cells, D = _edge_turning(
+    for name, adata in ({"": runs} if single else runs).items():
+        names, U, cells, D = _edge_turning(
             adata, reference, label_key, cluster_edges, xkey, vkey
         )
-        B = _edge_means(U, cells)
-        Dc, Bc = D - D.mean(axis=0), B - B.mean(axis=0)
-        glob = float(B.mean(axis=0) @ D.mean(axis=0))
-        turn = float((Bc * Dc).sum(axis=1).mean())
-        rows.append((name, glob, turn, float((Bc * Dc).sum() / (Dc * Dc).sum())))
+        glob, turn, value = _edge_parts(U, cells, D)
+        if single:
+            colors = _label_colors(adata, label_key)
+            rows = [
+                (e.replace(" -> ", " → "), g, t, colors.get(e.split(" -> ")[1], "C0"))
+                for e, g, t in zip(names, glob, turn)
+            ]
+        else:
+            rows.append((name, glob.mean(), turn.mean(), "C0", value))
 
     if ax is None:
-        _, ax = plt.subplots(figsize=(5.5, 0.5 + 0.45 * len(rows)))
+        _, ax = plt.subplots(figsize=(5.5, 0.6 + 0.4 * len(rows)))
     y = np.arange(len(rows))[::-1]
-    for yi, (_, glob, turn, value) in zip(y, rows):
-        ax.barh(yi, glob, color="0.75", height=0.6,
-                label="global" if yi == y[0] else None)
-        ax.barh(yi, turn, left=glob, color="C0", height=0.6,
-                label="turning" if yi == y[0] else None)
-        end = max(glob, glob + turn, 0)
-        ax.text(end + 0.01, yi, f"CBTurn {_fmt(value)}", va="center", fontsize=7)
+    for yi, row in zip(y, rows):
+        glob, turn, color = row[1:4]
+        ax.barh(yi, glob, color="0.75", height=0.6)
+        ax.barh(yi, turn, left=glob, color=color, height=0.6)
+        if not single:
+            ax.text(max(glob, glob + turn, 0) + 0.01, yi, f"CBTurn {_fmt(row[4])}",
+                    va="center", fontsize=7)
     ax.axvline(0, color="k", lw=0.6)
-    ax.set_yticks(y, [r[0] for r in rows])
-    ax.set_xlabel("centroid CBDir = global + turning")
+    ax.set_yticks(y, [r[0] for r in rows], fontsize=8)
+    ax.set_xlabel("grey: global part; colour: turning part", fontsize=8)
     ax.margins(x=0.25)
-    ax.legend(loc="lower right", frameon=False, fontsize=7)
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)
+    if single:
+        head = f"{title}\n" if title else ""
+        ax.set_title(f"{head}CBTurn = {_fmt(value)}", fontsize=10)
+    elif title:
+        ax.set_title(title, fontsize=10)
     return ax
+
+
+def _edge_parts(U, cells, D):
+    """Per edge the global and turning parts of its centroid CBDir, and CBTurn."""
+    B = _edge_means(U, cells)
+    Dc, Bc = D - D.mean(axis=0), B - B.mean(axis=0)
+    turn = (Bc * Dc).sum(axis=1)
+    glob = (B * D).sum(axis=1) - turn
+    return glob, turn, float(turn.sum() / (Dc * Dc).sum())
 
 
 def _fmt(x: float) -> str:

@@ -1871,7 +1871,9 @@ def test_pl_field_constancy_draws_r_and_the_wedges(rng):
     assert ax.get_title().endswith(f"R = {R:.2f}")
     arrow = [t for t in ax.texts if hasattr(t, "arrow_patch") and t.arrow_patch]
     assert arrow and arrow[0].xy == (0, pytest.approx(R))
-    assert [t.get_text() for t in ax.get_legend().get_texts()] == ["A", "B", "C"]
+    assert [t.get_text() for t in ax.get_legend().get_texts()] == [
+        "random directions (±2 sd)", "A", "B", "C",
+    ]
     assert len(ax.patches) >= 3 * 18
     plt.close("all")
 
@@ -1889,26 +1891,36 @@ def test_pl_cbturn_draws_what_cbturn_scores(rng):
     matplotlib = pytest.importorskip("matplotlib")
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib.patches import FancyArrowPatch
 
     a, V = _turning_run(rng)
+    a.obsm["X_umap"] = np.asarray(a.layers["Ms"])[:, :2]
     value = M.cbturn(a, **TURN, n_null=0).value
-    ax = ve.pl.cbturn(a, **TURN, title="curve", velocity_scale=2)
-    assert ax.get_title() == f"curve\nCBTurn = {value:.2f}, velocity × 2"
-    arrows = [t for t in ax.texts if getattr(t, "arrow_patch", None)]
-    assert len(arrows) == 4
+    ax = ve.pl.cbturn(a, **TURN, title="curve")
+    assert ax.get_title() == f"curve\nCBTurn = {value:.2f}"
+    arrows = [p for p in ax.patches if isinstance(p, FancyArrowPatch)]
+    assert len(arrows) == 2
     plt.close("all")
 
     const = a.copy()
     const.layers["velocity"] = np.tile(V[0], (a.n_obs, 1))
     ax = ve.pl.cbturn(const, **TURN)
-    assert len([t for t in ax.texts if getattr(t, "arrow_patch", None)]) == 2
+    grey = [p.get_facecolor() for p in ax.patches if isinstance(p, FancyArrowPatch)]
+    assert np.allclose(grey[0], grey[1]) and np.ptp(grey[0][:3]) < 0.01
+    plt.close("all")
+
+    ax = ve.pl.cbturn_parts(a, **TURN)
+    bars = ax.patches
+    assert len(bars) == 4
+    glob, turn = [b.get_width() for b in bars[0::2]], [b.get_width() for b in bars[1::2]]
+    centroid = np.mean(np.add(glob, turn))
+    assert ax.get_title() == f"CBTurn = {value:.2f}"
     plt.close("all")
 
     ax = ve.pl.cbturn_parts({"curve": a, "constant": const}, **TURN)
     bars = ax.patches
-    assert len(bars) == 4
-    glob_c, turn_c = bars[2].get_width(), bars[3].get_width()
-    assert abs(turn_c) < 1e-12 and glob_c > 0
+    assert bars[0].get_width() + bars[1].get_width() == pytest.approx(centroid)
+    assert abs(bars[3].get_width()) < 1e-12 and bars[2].get_width() > 0
     labels = [t.get_text() for t in ax.texts]
     assert labels == [f"CBTurn {value:.2f}", "CBTurn 0.00"]
     plt.close("all")
