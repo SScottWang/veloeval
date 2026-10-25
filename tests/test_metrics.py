@@ -1883,3 +1883,32 @@ def test_pl_field_constancy_draws_r_and_the_wedges(rng):
     with pytest.raises(ValueError, match="not_applicable"):
         ve.pl.field_constancy(a)
     plt.close("all")
+
+
+def test_pl_cbturn_draws_what_cbturn_scores(rng):
+    matplotlib = pytest.importorskip("matplotlib")
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    a, V = _turning_run(rng)
+    value = M.cbturn(a, **TURN, n_null=0).value
+    ax = ve.pl.cbturn(a, **TURN, title="curve", velocity_scale=2)
+    assert ax.get_title() == f"curve\nCBTurn = {value:.2f}, velocity × 2"
+    arrows = [t for t in ax.texts if getattr(t, "arrow_patch", None)]
+    assert len(arrows) == 4
+    plt.close("all")
+
+    const = a.copy()
+    const.layers["velocity"] = np.tile(V[0], (a.n_obs, 1))
+    ax = ve.pl.cbturn(const, **TURN)
+    assert len([t for t in ax.texts if getattr(t, "arrow_patch", None)]) == 2
+    plt.close("all")
+
+    ax = ve.pl.cbturn_parts({"curve": a, "constant": const}, **TURN)
+    bars = ax.patches
+    assert len(bars) == 4
+    glob_c, turn_c = bars[2].get_width(), bars[3].get_width()
+    assert abs(turn_c) < 1e-12 and glob_c > 0
+    labels = [t.get_text() for t in ax.texts]
+    assert labels == [f"CBTurn {value:.2f}", "CBTurn 0.00"]
+    plt.close("all")

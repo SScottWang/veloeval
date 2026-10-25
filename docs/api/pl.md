@@ -30,3 +30,46 @@ comes from `docs/_scripts/field_constancy_pancreas.py`.
 ```{eval-rst}
 .. autofunction:: veloeval.pl.field_constancy
 ```
+
+## CBTurn
+
+{func}`~veloeval.metrics.cbturn` regresses what changes in the velocity from
+one cluster edge to the next on what changes in the data. Two plots show it.
+
+`cbturn_parts` compares methods. Averaged over edges, the agreement of each
+edge's mean boundary velocity with its direction — a centroid version of
+CBDir — splits exactly into a global part, one direction shared by every edge,
+and a turning part:
+
+```python
+runs = {"scVelo dynamical": dyn, "ConstVelo": const}   # prepared on ref
+ve.pl.cbturn_parts(runs, ref, label_key="clusters", cluster_edges=edges)
+```
+
+![CBDir split into a global and a turning part on pancreas](../_static/cbturn_pancreas_parts.png)
+
+ConstVelo scores the highest of all on the global part and nothing on the
+turning part.
+
+`cbturn` reads one method. Each edge's direction minus the mean over edges is
+a grey arrow; the mean unit velocity of its boundary cells minus the mean over
+edges is a coloured one, in the target cluster's colour, lengthened by the
+factor in the title. Both are drawn in the plane holding most of the spread of
+the edge directions.
+
+```python
+ve.pl.cbturn(dyn, ref, label_key="clusters", cluster_edges=edges)
+```
+
+![CBTurn compass on pancreas](../_static/cbturn_pancreas_compass.png)
+
+The dynamical model's arrows follow most of the grey ones, the reversed
+field's point against them, and ConstVelo has none. Its grey arrows differ from
+the others' because it scores all 2000 genes rather than the dynamical model's
+velocity genes. Both figures come from `docs/_scripts/cbturn_pancreas.py`.
+
+```{eval-rst}
+.. autofunction:: veloeval.pl.cbturn
+
+.. autofunction:: veloeval.pl.cbturn_parts
+```

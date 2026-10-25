@@ -42,6 +42,7 @@ On pancreas (7 edges, scvelo 0.3.2):
 | reversed dynamical | −0.173 | −0.207 | 0.023 |
 
 CBTurn is a slope, not bounded by 1; compare methods within a dataset.
+{doc}`pl` shows how the score splits by edge and against CBDir.
 
 ```{eval-rst}
 .. autosummary::

@@ -459,6 +459,36 @@ def cbturn(
         res = M.cbturn(adata, ref, label_key="clusters", cluster_edges=edges)
         res.value, res.detail
     """
+    names, U, cells, D = _edge_turning(
+        adata, reference, label_key, cluster_edges, xkey, vkey
+    )
+    Dc = D - D.mean(axis=0)
+    denom = float((Dc * Dc).sum())
+    B = _edge_means(U, cells)
+    terms = ((B - B.mean(axis=0)) * Dc).sum(axis=1) / denom
+    value = float(terms.sum())
+    detail = f"{len(names)} edges; global part {B.mean(axis=0) @ D.mean(axis=0):.3f}"
+    if n_null > 0:
+        rng = np.random.default_rng(seed)
+        null = []
+        for _ in range(n_null):
+            Bp = _edge_means(U[rng.permutation(len(U))], cells)
+            null.append(((Bp - Bp.mean(axis=0)) * Dc).sum() / denom)
+        detail += f"; shuffled q97.5 {np.quantile(null, 0.975):.3f}"
+    return MetricResult(
+        name="cbturn",
+        value=value,
+        detail=detail,
+        per_group=dict(zip(names, terms.tolist())),
+    )
+
+
+def _edge_turning(adata, reference, label_key, cluster_edges, xkey, vkey):
+    """What :func:`cbturn` scores: per edge, its boundary cells and direction.
+
+    Returns the edge names, the unit velocities, each edge's boundary cells and
+    the unit edge directions, one row per edge.
+    """
     space = velocity_space(adata)
     if space not in ("gene", "latent"):
         raise NotApplicable(
@@ -489,28 +519,11 @@ def cbturn(
         raise NotApplicable(
             f"edge directions nearly parallel (mean squared spread {spread:.3f})"
         )
-    denom = float((Dc * Dc).sum())
+    return names, U, cells, D
 
-    def edge_means(U):
-        return np.array([U[c].mean(axis=0) for c in cells])
 
-    B = edge_means(U)
-    terms = ((B - B.mean(axis=0)) * Dc).sum(axis=1) / denom
-    value = float(terms.sum())
-    detail = f"{len(names)} edges; global part {B.mean(axis=0) @ D.mean(axis=0):.3f}"
-    if n_null > 0:
-        rng = np.random.default_rng(seed)
-        null = []
-        for _ in range(n_null):
-            Bp = edge_means(U[rng.permutation(len(U))])
-            null.append(((Bp - Bp.mean(axis=0)) * Dc).sum() / denom)
-        detail += f"; shuffled q97.5 {np.quantile(null, 0.975):.3f}"
-    return MetricResult(
-        name="cbturn",
-        value=value,
-        detail=detail,
-        per_group=dict(zip(names, terms.tolist())),
-    )
+def _edge_means(U, cells):
+    return np.array([U[c].mean(axis=0) for c in cells])
 
 
 def _turning_inputs(adata, reference, xkey, vkey):
