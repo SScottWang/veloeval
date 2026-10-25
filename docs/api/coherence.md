@@ -22,7 +22,8 @@ data with a known lineage with {func}`~veloeval.metrics.cbdir` and
 how close the field is to one constant direction. A method far more constant
 than the others on the same dataset, with high coherence, has probably
 collapsed to a constant vector, and its coherence is then no evidence of
-quality. `DIRECTION` maps it to `None`.
+quality. `DIRECTION` maps it to `None`. {func}`veloeval.pl.field_constancy`
+draws where each cell points relative to the mean direction; see {doc}`pl`.
 
 ```{eval-rst}
 .. autosummary::

@@ -1857,3 +1857,29 @@ def test_cbturn_statuses(rng):
     assert M.cbturn(a, **TURN).status == "ok"
     del a.layers["Ms"]
     assert M.cbturn(a, **TURN).status == "missing_input"
+
+
+def test_pl_field_constancy_draws_r_and_the_wedges(rng):
+    matplotlib = pytest.importorskip("matplotlib")
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    a, V = _turning_run(rng)
+    a.uns["clusters_colors"] = ["#111111", "#222222", "#333333"]
+    ax = ve.pl.field_constancy(a, label_key="clusters", title="curve", bins=18)
+    R = M.field_constancy(a).value
+    assert ax.get_title().endswith(f"R = {R:.2f}")
+    arrow = [t for t in ax.texts if hasattr(t, "arrow_patch") and t.arrow_patch]
+    assert arrow and arrow[0].xy == (0, pytest.approx(R))
+    assert [t.get_text() for t in ax.get_legend().get_texts()] == ["A", "B", "C"]
+    assert len(ax.patches) >= 3 * 18
+    plt.close("all")
+
+    a.layers["velocity"] = np.tile(V[0], (a.n_obs, 1))
+    ax = ve.pl.field_constancy(a, bins=18)
+    heights = [p.get_height() for p in ax.patches if p.get_x() > 0]
+    assert max(heights, default=0) == 0
+    a.layers["velocity"] = np.zeros_like(V)
+    with pytest.raises(ValueError, match="not_applicable"):
+        ve.pl.field_constancy(a)
+    plt.close("all")

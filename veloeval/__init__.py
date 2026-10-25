@@ -28,6 +28,7 @@ Record :data:`__version__` alongside the numbers.  Without it a table computed
 before a metric was fixed is indistinguishable from one computed after.
 """
 
+from . import pl
 from ._constvelo import constvelo
 from .access import (
     GENES_KEY,
@@ -61,6 +62,7 @@ __all__ = [
     "build_spatial_neighbors",
     "project_velocity",
     "constvelo",
+    "pl",
     "set_velocity_space",
     "velocity_space",
     "__version__",
