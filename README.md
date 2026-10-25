@@ -42,6 +42,7 @@ r.status, r.value      # ("ok", 0.43)
 | group | metric | needs | direction |
 | --- | --- | --- | --- |
 | direction | `cbdir`, `cbvcoh` | curated `cluster_edges` | higher |
+| | `cbturn` | curated `cluster_edges`; gene or latent space | higher |
 | | `cto` | inferred time; `cluster_edges` or measured stages | higher |
 | coherence | `icvcoh` | cell-type labels | higher |
 | | `velocity_consistency` | — | higher |

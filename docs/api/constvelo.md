@@ -32,6 +32,9 @@ is an idealised example, right only roughly.
 
 The figure comes from `docs/_scripts/constvelo_pancreas.py`.
 
+Every constant field scores 0 on {func}`~veloeval.metrics.cbturn`, which keeps
+only the part of the velocity that changes from one cluster edge to the next.
+
 ```{eval-rst}
 .. autofunction:: veloeval.constvelo
 ```

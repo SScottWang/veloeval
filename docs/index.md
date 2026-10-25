@@ -53,6 +53,7 @@ r.per_cell  # array, nan where the cell could not be scored
 | --- | --- | --- | --- |
 | **direction** | {func}`~veloeval.metrics.cbdir` | curated edges | higher |
 | | {func}`~veloeval.metrics.cbvcoh` | curated edges | higher |
+| | {func}`~veloeval.metrics.cbturn` | curated edges; gene or latent space | higher |
 | | {func}`~veloeval.metrics.cto` | inferred time; curated edges or measured stages | higher |
 | **coherence** | {func}`~veloeval.metrics.icvcoh` | cell-type labels | higher |
 | | {func}`~veloeval.metrics.velocity_consistency` | — | higher |

@@ -14,7 +14,7 @@ from .coherence import (
     time_morans_i,
     velocity_consistency,
 )
-from .direction import cbdir, cbvcoh, cto
+from .direction import cbdir, cbturn, cbvcoh, cto
 from .groundtruth import gamma_corr, lineage_fate, phase_dir, rate_err, truth_cos
 from .negative import ees, sts, sts_abs
 from .temporal import phase_corr, tsc
@@ -25,6 +25,7 @@ from .temporal import phase_corr, tsc
 DIRECTION = {
     "cbdir": "higher",
     "cbvcoh": "higher",
+    "cbturn": "higher",
     "cto": "higher",
     "icvcoh": "higher",
     "velocity_consistency": "higher",
@@ -47,6 +48,7 @@ DIRECTION = {
 __all__ = [
     "cbdir",
     "cbvcoh",
+    "cbturn",
     "cto",
     "icvcoh",
     "velocity_consistency",

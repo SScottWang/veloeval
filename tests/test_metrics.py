@@ -1791,3 +1791,69 @@ def test_direction_scores_ignore_the_length_of_a_constant_velocity(reference):
         out.append([M.cbdir(m, **kw).value, M.cbdir(m, **kw, basis=None).value,
                     M.cbvcoh(m, **kw).value, M.icvcoh(m, label_key="clusters").value])
     assert out[0] == out[1] == out[2]
+
+
+def _turning_run(rng, arc=np.pi, noise=0.01):
+    _, X, V, lab = _curve(rng, arc=arc, noise=noise)
+    a = _gene_run(X, V, lab)
+    ve.set_velocity_space(a, "gene")
+    return a, V
+
+
+TURN = dict(label_key="clusters", cluster_edges=EDGES3)
+
+
+def test_cbturn_scores_turning_and_not_a_constant_field(rng):
+    a, V = _turning_run(rng)
+    true = M.cbturn(a, **TURN)
+    assert true.status == "ok" and true.value > 0.3
+    assert sum(true.per_group.values()) == pytest.approx(true.value)
+    assert re.match(r"2 edges; global part [\d.]+; shuffled q97.5 ", true.detail)
+    q = float(true.detail.rsplit(" ", 1)[1])
+    assert true.value > q
+
+    a.layers["velocity"] = -V
+    assert M.cbturn(a, **TURN).value == pytest.approx(-true.value)
+    a.layers["velocity"] = 8 * V
+    assert M.cbturn(a, **TURN).value == pytest.approx(true.value, abs=1e-12)
+    for c in (V.mean(0), np.random.default_rng(1).normal(size=V.shape[1])):
+        a.layers["velocity"] = np.tile(c, (a.n_obs, 1))
+        assert abs(M.cbturn(a, **TURN).value) < 1e-12
+    a.layers["velocity"] = 0.99 * np.tile(V.mean(0), (a.n_obs, 1)) + 0.01 * V
+    assert 0 < M.cbturn(a, **TURN).value < 0.05 * true.value
+    assert ";" not in M.cbturn(a, **TURN, n_null=0).detail.split("part")[1]
+
+
+def test_cbturn_reads_the_reference_edges(reference):
+    ref, X, V = reference
+    m = _method(ref, X, V, 1, 8)
+    ve.prepare(m, reference=ref)
+    own = M.cbturn(m, ref, **TURN)
+    assert own.status == "ok" and own.value > 0
+    noisy = m.copy()
+    noisy.layers["Ms"] = noisy.layers["Ms"] + 5 * np.random.default_rng(2).normal(
+        size=noisy.shape
+    ).astype(np.float32)
+    assert M.cbturn(noisy, ref, **TURN).value == own.value
+
+    no_ms = ref.copy()
+    del no_ms.layers["Ms"]
+    assert M.cbturn(m, no_ms, **TURN).status == "missing_input"
+    stranger = ref[1:].copy()
+    assert M.cbturn(m, stranger, **TURN).status == "not_applicable"
+
+
+def test_cbturn_statuses(rng):
+    line, _ = _turning_run(rng, arc=0.0)
+    r = M.cbturn(line, **TURN)
+    assert r.status == "not_applicable" and "parallel" in r.detail
+    a, _ = _turning_run(rng)
+    r = M.cbturn(a, label_key="clusters", cluster_edges=[["A", "B"]])
+    assert r.status == "not_applicable" and "two" in r.detail
+    for space in ("embedding", "scalar"):
+        ve.set_velocity_space(a, space)
+        assert M.cbturn(a, **TURN).status == "not_applicable"
+    ve.set_velocity_space(a, "latent")
+    assert M.cbturn(a, **TURN).status == "ok"
+    del a.layers["Ms"]
+    assert M.cbturn(a, **TURN).status == "missing_input"

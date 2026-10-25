@@ -19,6 +19,8 @@ import numpy as np
 
 from .._math import nanmean, rowwise_cosine
 from ..access import (
+    GENES_KEY,
+    _dense,
     get_embedding,
     get_labels,
     get_neighbor_indices,
@@ -27,9 +29,9 @@ from ..access import (
     get_velocity_graph,
     velocity_space,
 )
-from ..result import MetricResult, NotApplicable, metric
+from ..result import MetricResult, MissingInput, NotApplicable, metric
 
-__all__ = ["cbdir", "cbvcoh", "cto"]
+__all__ = ["cbdir", "cbvcoh", "cbturn", "cto"]
 
 
 _BOUNDARY_RULES = ("target", "non_source")
@@ -360,6 +362,189 @@ def cbvcoh(
     return _aggregate_over_edges(
         labels, cluster_edges, indices, adata.n_obs, score, boundary
     )
+
+
+# Below this mean squared spread the edge directions are too close to parallel
+# for their differences to carry a signal; provisional until set on simulations.
+_MIN_EDGE_SPREAD = 0.05
+
+
+@metric
+def cbturn(
+    adata,
+    reference=None,
+    *,
+    label_key: str,
+    cluster_edges,
+    xkey: str = "Ms",
+    vkey: str = "velocity",
+    n_null: int = 200,
+    seed: int = 0,
+):
+    r"""Cross-boundary turning.
+
+    Whether the velocity changes direction from one cluster edge to the next
+    the way the data do.  For each edge :math:`e` (A -> B) take the boundary
+    cells of :func:`cbdir` -- cells of A with a kNN neighbour in B -- and the
+    mean of their unit velocities :math:`\bar u_e`; the edge's own direction is
+    :math:`\hat d_e`, the unit difference of the B and A means of
+    ``layers[xkey]``.  After removing what all edges share,
+
+    .. math::
+
+        \mathrm{CBTurn} = \frac{\sum_e \langle \bar u_e - \bar u,\;
+        \hat d_e - \bar d \rangle}{\sum_e \lVert \hat d_e - \bar d \rVert^2},
+
+    with :math:`\bar u, \bar d` the means over edges: the slope of the
+    edge-specific velocity on the edge-specific direction.
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        Velocity in gene or latent space, cell labels and the shared kNN.
+    reference : anndata.AnnData, optional
+        Where ``layers[xkey]`` is read, cells looked up by name -- the reference
+        of :func:`~veloeval.prepare` in gene space, so that every method is
+        scored against the same edge directions.  ``None`` reads *adata*'s own
+        ``layers[xkey]``: in latent space the method's coordinates, comparable
+        only within the method.
+    label_key : str
+        ``obs`` column holding the cell types.
+    cluster_edges : list of [source, target]
+        Known differentiation steps; at least two, not all parallel.
+    xkey : str, default: ``"Ms"``
+    vkey : str, default: ``"velocity"``
+    n_null : int, default: 200
+        Shuffles of the velocities across cells for the null; ``0`` skips it.
+    seed : int, default: 0
+        Seed of the shuffles.
+
+    Returns
+    -------
+    MetricResult
+        ``detail`` gives the number of edges, the global part
+        :math:`\langle \bar u, \bar d \rangle` and the 97.5% quantile of the
+        score with velocities shuffled across cells.  ``per_group`` holds each
+        edge's term of the sum; they add up to the value.  ``not_applicable``
+        in embedding or scalar space, with fewer than two edges scored, or when
+        the edge directions are nearly parallel.
+
+    Notes
+    -----
+    Every constant field -- one vector for all cells -- scores 0 up to rounding, and so
+    does any field whose boundary cells point the same way on every edge; a
+    reversed field scores the negative.  :math:`\langle \bar u_e, \hat d_e
+    \rangle` averaged over edges, a centroid version of :func:`cbdir`, is the
+    global part plus the turning term, so a field can score well on
+    :func:`cbdir` from the global part alone; this metric keeps only the
+    turning term.  Being a slope and not a correlation, a field that is 99%
+    constant scores about 1% of the field it is mixed from.  It is not bounded
+    by 1: the mean of unit velocities is shorter than 1 unless they agree, and
+    the ceiling depends on the dataset, so compare methods within a dataset.
+
+    The velocity is read on ``var['veloeval_genes']`` if present, otherwise
+    on ``var['{vkey}_genes']`` (if present) with finite velocity.  Not in an
+    embedding: projecting velocity through the neighbour graph turns it
+    along the data on its own -- on pancreas a constant gene-space field
+    scores 0.42 in the UMAP, next to 0.46 for scVelo's dynamical model.
+
+    Examples
+    --------
+    .. code-block:: python
+
+        import veloeval as ve
+        from veloeval import metrics as M
+
+        ve.prepare(adata, reference=ref)
+        res = M.cbturn(adata, ref, label_key="clusters", cluster_edges=edges)
+        res.value, res.detail
+    """
+    space = velocity_space(adata)
+    if space not in ("gene", "latent"):
+        raise NotApplicable(
+            f"velocity is in {space!r} space; projected velocity turns with the "
+            "neighbour graph, so turning is read in gene or latent space only"
+        )
+    labels = get_labels(adata, label_key)
+    indices = get_neighbor_indices(adata)
+    V, X = _turning_inputs(adata, reference, xkey, vkey)
+
+    norm = np.linalg.norm(V, axis=1, keepdims=True)
+    U = np.divide(V, norm, out=np.zeros_like(V), where=norm > 0)
+    names, cells, D = [], [], []
+    for name, members in _boundary_groups(labels, cluster_edges, indices):
+        src, tgt = name.split(" -> ")
+        d = X[labels == tgt].mean(axis=0) - X[labels == src].mean(axis=0)
+        if np.linalg.norm(d) == 0:
+            continue
+        names.append(name)
+        cells.append(np.array([i for i, _ in members]))
+        D.append(d / np.linalg.norm(d))
+    if len(names) < 2:
+        raise NotApplicable(f"{len(names)} cluster edge scored; turning needs two")
+    D = np.array(D)
+    Dc = D - D.mean(axis=0)
+    spread = float((Dc * Dc).sum(axis=1).mean())
+    if spread < _MIN_EDGE_SPREAD:
+        raise NotApplicable(
+            f"edge directions nearly parallel (mean squared spread {spread:.3f})"
+        )
+    denom = float((Dc * Dc).sum())
+
+    def edge_means(U):
+        return np.array([U[c].mean(axis=0) for c in cells])
+
+    B = edge_means(U)
+    terms = ((B - B.mean(axis=0)) * Dc).sum(axis=1) / denom
+    value = float(terms.sum())
+    detail = f"{len(names)} edges; global part {B.mean(axis=0) @ D.mean(axis=0):.3f}"
+    if n_null > 0:
+        rng = np.random.default_rng(seed)
+        null = []
+        for _ in range(n_null):
+            Bp = edge_means(U[rng.permutation(len(U))])
+            null.append(((Bp - Bp.mean(axis=0)) * Dc).sum() / denom)
+        detail += f"; shuffled q97.5 {np.quantile(null, 0.975):.3f}"
+    return MetricResult(
+        name="cbturn",
+        value=value,
+        detail=detail,
+        per_group=dict(zip(names, terms.tolist())),
+    )
+
+
+def _turning_inputs(adata, reference, xkey, vkey):
+    """Velocity and ``layers[xkey]`` on the same features, cells in *adata*'s order."""
+    if vkey not in adata.layers:
+        raise MissingInput(f"layers['{vkey}']")
+    source = adata if reference is None else reference
+    if xkey not in source.layers:
+        where = "reference" if reference is not None else "adata"
+        raise MissingInput(f"{where} layers['{xkey}']")
+
+    if GENES_KEY in adata.var:
+        keep = adata.var[GENES_KEY].to_numpy(dtype=bool)
+    elif f"{vkey}_genes" in adata.var:
+        keep = adata.var[f"{vkey}_genes"].to_numpy(dtype=bool)
+    else:
+        keep = np.ones(adata.n_vars, dtype=bool)
+    if reference is not None:
+        keep &= adata.var_names.isin(reference.var_names)
+        missing = adata.obs_names.difference(reference.obs_names)
+        if len(missing):
+            raise NotApplicable(
+                f"{len(missing)} cells are not in the reference, e.g. {missing[0]!r}"
+            )
+    V = _dense(adata.layers[vkey][:, keep])
+    finite = ~np.isnan(V).any(axis=0)
+    features = adata.var_names[keep][finite]
+    if len(features) < 2:
+        raise NotApplicable(f"{len(features)} features with finite velocity")
+    if reference is None:
+        X = adata[:, features].layers[xkey]
+    else:
+        X = reference[adata.obs_names, features].layers[xkey]
+    return V[:, finite], _dense(X)
 
 
 def _ordered_stages(adata, stage_key: str):
