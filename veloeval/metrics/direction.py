@@ -378,7 +378,7 @@ def cbturn(
     cluster_edges,
     xkey: str = "Ms",
     vkey: str = "velocity",
-    n_null: int = 200,
+    n_null: int = 1000,
     seed: int = 0,
 ):
     r"""Cross-boundary turning.
@@ -404,8 +404,10 @@ def cbturn(
         Velocity in gene or latent space, cell labels and the shared kNN.
     reference : anndata.AnnData, optional
         Where ``layers[xkey]`` is read, cells looked up by name -- the reference
-        of :func:`~veloeval.prepare` in gene space, so that every method is
-        scored against the same edge directions.  ``None`` reads *adata*'s own
+        of :func:`~veloeval.prepare` in gene space, so that the edge
+        directions come from the reference, on the genes the method is scored
+        on (``var['veloeval_genes']``); methods scoring different genes get
+        slightly different directions.  ``None`` reads *adata*'s own
         ``layers[xkey]``: in latent space the method's coordinates, comparable
         only within the method.
     label_key : str
@@ -414,7 +416,7 @@ def cbturn(
         Known differentiation steps; at least two, not all parallel.
     xkey : str, default: ``"Ms"``
     vkey : str, default: ``"velocity"``
-    n_null : int, default: 200
+    n_null : int, default: 1000
         Shuffles of the velocities across cells for the null; ``0`` skips it.
     seed : int, default: 0
         Seed of the shuffles.
@@ -467,12 +469,15 @@ def cbturn(
     B = _edge_means(U, cells)
     terms = ((B - B.mean(axis=0)) * Dc).sum(axis=1) / denom
     value = float(terms.sum())
+    if not np.isfinite(value):
+        raise ValueError(f"CBTurn is {value}; check labels and edges")
     detail = f"{len(names)} edges; global part {B.mean(axis=0) @ D.mean(axis=0):.3f}"
     if n_null > 0:
         rng = np.random.default_rng(seed)
         null = []
         for _ in range(n_null):
-            Bp = _edge_means(U[rng.permutation(len(U))], cells)
+            p = rng.permutation(len(U))
+            Bp = _edge_means(U, [p[c] for c in cells])
             null.append(((Bp - Bp.mean(axis=0)) * Dc).sum() / denom)
         detail += f"; shuffled q97.5 {np.quantile(null, 0.975):.3f}"
     return MetricResult(
@@ -501,9 +506,10 @@ def _edge_turning(adata, reference, label_key, cluster_edges, xkey, vkey):
 
     norm = np.linalg.norm(V, axis=1, keepdims=True)
     U = np.divide(V, norm, out=np.zeros_like(V), where=norm > 0)
+    pairs = {f"{s} -> {t}": (s, t) for s, t in cluster_edges}
     names, cells, D = [], [], []
     for name, members in _boundary_groups(labels, cluster_edges, indices):
-        src, tgt = name.split(" -> ")
+        src, tgt = pairs[name]
         d = X[labels == tgt].mean(axis=0) - X[labels == src].mean(axis=0)
         if np.linalg.norm(d) == 0:
             continue

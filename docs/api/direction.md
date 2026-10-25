@@ -24,7 +24,8 @@ mean boundary velocity of each edge, minus the mean over edges, against the
 edge's own direction minus theirs — so every constant field scores 0 and a
 reversed one the negative. It reads gene or latent space, never an embedding,
 whose projection turns the velocity along the data by itself, and it takes the
-reference so that every method is scored against the same edge directions:
+reference so that the edge directions come from the reference's `Ms`, on the
+genes the method is scored on:
 
 ```python
 ve.prepare(adata, reference=ref)
@@ -35,11 +36,11 @@ On pancreas (7 edges, scvelo 0.3.2):
 
 | velocity | CBDir (gene) | CBTurn | shuffled q97.5 |
 | --- | --- | --- | --- |
-| scVelo dynamical | 0.173 | 0.207 | 0.023 |
+| scVelo dynamical | 0.173 | 0.207 | 0.024 |
 | scVelo deterministic | 0.093 | 0.060 | 0.006 |
-| scVelo stochastic | 0.078 | 0.045 | 0.007 |
+| scVelo stochastic | 0.078 | 0.045 | 0.006 |
 | ConstVelo, Ductal to Beta | 0.139 | 0.000 | 0.000 |
-| reversed dynamical | −0.173 | −0.207 | 0.023 |
+| reversed dynamical | −0.173 | −0.207 | 0.024 |
 
 CBTurn is a slope, not bounded by 1; compare methods within a dataset.
 {doc}`pl` shows how the score splits by edge and against CBDir.

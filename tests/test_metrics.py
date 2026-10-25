@@ -1824,6 +1824,17 @@ def test_cbturn_scores_turning_and_not_a_constant_field(rng):
     assert ";" not in M.cbturn(a, **TURN, n_null=0).detail.split("part")[1]
 
 
+def test_cbturn_takes_labels_that_are_not_strings(rng):
+    a, _ = _turning_run(rng)
+    named = M.cbturn(a, **TURN, n_null=0)
+    code = {"A": 0, "B": 1, "C": 2}
+    a.obs["clusters"] = a.obs["clusters"].map(code).astype(int).astype("category")
+    edges = [[code[s], code[t]] for s, t in EDGES3]
+    numbered = M.cbturn(a, label_key="clusters", cluster_edges=edges, n_null=0)
+    assert numbered.status == "ok"
+    assert numbered.value == pytest.approx(named.value)
+
+
 def test_cbturn_reads_the_reference_edges(reference):
     ref, X, V = reference
     m = _method(ref, X, V, 1, 8)

@@ -201,12 +201,11 @@ def cbturn(
         _, ax = plt.subplots(figsize=(5.5, 4.2))
     ax.scatter(*emb.T, c=[colors.get(x, "0.8") for x in labels], s=4, lw=0,
                alpha=0.12, rasterized=True)
-    nodes = sorted({n for e in names for n in e.split(" -> ")},
-                   key=list(colors).index)
+    edges = _edge_pairs(names, cluster_edges)
+    nodes = sorted({n for e in edges for n in e}, key=list(colors).index)
     where = {n: np.median(emb[labels == n], axis=0) for n in nodes}
     size = {n: 60 + 240 * np.sqrt((labels == n).mean()) for n in nodes}
-    for name, t in zip(names, turn):
-        src, tgt = name.split(" -> ")
+    for (src, tgt), t in zip(edges, turn):
         ax.add_patch(FancyArrowPatch(
             where[src], where[tgt], arrowstyle="-|>", mutation_scale=16,
             color=cmap(norm(t)), lw=2.6, zorder=2,
@@ -296,8 +295,10 @@ def cbturn_parts(
         if single:
             colors = _label_colors(adata, label_key)
             rows = [
-                (e.replace(" -> ", " → "), g, t, colors.get(e.split(" -> ")[1], "C0"))
-                for e, g, t in zip(names, glob, turn)
+                (e.replace(" -> ", " → "), g, t, colors.get(tgt, "C0"))
+                for e, (_, tgt), g, t in zip(
+                    names, _edge_pairs(names, cluster_edges), glob, turn
+                )
             ]
         else:
             rows.append((name, glob.mean(), turn.mean(), "C0", value))
@@ -333,6 +334,12 @@ def _edge_parts(U, cells, D):
     turn = (Bc * Dc).sum(axis=1)
     glob = (B * D).sum(axis=1) - turn
     return glob, turn, float(turn.sum() / (Dc * Dc).sum())
+
+
+def _edge_pairs(names, cluster_edges):
+    """``(source, target)`` of each edge name, with the labels' own types."""
+    pairs = {f"{s} -> {t}": (s, t) for s, t in cluster_edges}
+    return [pairs[n] for n in names]
 
 
 def _fmt(x: float) -> str:
