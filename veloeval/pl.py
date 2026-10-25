@@ -140,8 +140,8 @@ def cbturn(
     Each cell type is a node at the median of its cells in ``obsm['X_{basis}']``,
     sized by its number of cells, and each of *cluster_edges* an arrow from
     source to target, as in scVelo's PAGA plot.  The arrow's colour is the
-    edge's turning part (see :func:`cbturn_parts`): red where the velocity on
-    the edge turns with it, blue where against it, grey where nothing on the
+    edge's turning part (see :func:`cbturn_parts`): blue where the velocity on
+    the edge turns with it, red where against it, grey where nothing on the
     edge sets it apart from the others.  The
     embedding only places the nodes: the scores are computed in gene or latent
     space, and an arrow's angle in the plot says nothing about the velocity.
@@ -175,8 +175,8 @@ def cbturn(
         ve.pl.cbturn(adata, ref, label_key="clusters", cluster_edges=edges)
     """
     import matplotlib.pyplot as plt
-    from matplotlib import colormaps, patheffects
-    from matplotlib.colors import Normalize
+    from matplotlib import patheffects
+    from matplotlib.colors import LinearSegmentedColormap, Normalize
     from matplotlib.patches import FancyArrowPatch
 
     names, U, cells, D = _edge_turning(
@@ -192,7 +192,9 @@ def cbturn(
         vmax = float(np.abs(turn).max())
         if vmax <= 1e-6 * reach:
             vmax = reach
-    cmap = colormaps["coolwarm"]
+    cmap = LinearSegmentedColormap.from_list(
+        "turn", ["#67001f", "#d6604d", "#c8c8c8", "#4393c3", "#053061"]
+    )
     norm = Normalize(-vmax, vmax)
 
     if ax is None:
