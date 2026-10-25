@@ -479,7 +479,7 @@ def cbturn(
             p = rng.permutation(len(U))
             Bp = _edge_means(U, [p[c] for c in cells])
             null.append(((Bp - Bp.mean(axis=0)) * Dc).sum() / denom)
-        detail += f"; shuffled q97.5 {np.quantile(null, 0.975):.3f}"
+        detail += f"; shuffled q97.5 {np.quantile(null, 0.975):.6g}"
     return MetricResult(
         name="cbturn",
         value=value,
@@ -506,7 +506,7 @@ def _edge_turning(adata, reference, label_key, cluster_edges, xkey, vkey):
 
     norm = np.linalg.norm(V, axis=1, keepdims=True)
     U = np.divide(V, norm, out=np.zeros_like(V), where=norm > 0)
-    pairs = {f"{s} -> {t}": (s, t) for s, t in cluster_edges}
+    pairs = {f"{s} -> {t}": (s, t) for s, t in cluster_edges or ()}
     names, cells, D = [], [], []
     for name, members in _boundary_groups(labels, cluster_edges, indices):
         src, tgt = pairs[name]

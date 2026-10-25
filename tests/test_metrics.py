@@ -1861,6 +1861,9 @@ def test_cbturn_statuses(rng):
     a, _ = _turning_run(rng)
     r = M.cbturn(a, label_key="clusters", cluster_edges=[["A", "B"]])
     assert r.status == "not_applicable" and "two" in r.detail
+    for none in (None, []):
+        r = M.cbturn(a, label_key="clusters", cluster_edges=none)
+        assert r.status == "not_applicable" and "no curated" in r.detail
     for space in ("embedding", "scalar"):
         ve.set_velocity_space(a, space)
         assert M.cbturn(a, **TURN).status == "not_applicable"
