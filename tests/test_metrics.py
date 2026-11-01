@@ -1755,6 +1755,41 @@ def test_constvelo_is_one_unit_vector_from_start_to_end(rng):
     assert "X_pca" not in a.obsm
 
 
+def test_constvelo_times_each_cell_by_its_travel_along_c(rng):
+    a = _counts(rng)
+    Ms = rng.normal(size=a.shape)
+    a.layers["Ms"] = Ms
+    c = ve.constvelo(a, start="A", end="C")
+    t = a.obs["constvelo_time"].to_numpy()
+    np.testing.assert_allclose(t, Ms @ c - (Ms @ c).min())
+    assert t.min() == 0 and a.uns["veloeval"]["constvelo"]["time_key"] == "constvelo_time"
+
+    last = int(np.argmax(t))
+    moved = a.copy()
+    moved.layers["Ms"] = Ms + 2.5 * c
+    moved.layers["Ms"][last] += 3.0 * c
+    ve.constvelo(moved, start="A", end="C")
+    later = moved.obs["constvelo_time"].to_numpy() - t
+    np.testing.assert_allclose(np.delete(later, last), 0, atol=1e-12)
+    assert later[last] == pytest.approx(3.0)
+
+    b = a.copy()
+    del b.obs["constvelo_time"]
+    ve.constvelo(b, start="A", end="C", time_key=None)
+    assert "constvelo_time" not in b.obs
+
+
+def test_prepare_keeps_the_constvelo_time(reference):
+    ref, X, V = reference
+    m = _method(ref, X, V, 1, 8)
+    ve.constvelo(m, start="A", end="C")
+    t = m.obs["constvelo_time"].copy()
+    ve.prepare(m, reference=ref)
+    assert m.obs["constvelo_time"].equals(t)
+    r = M.cto(m, label_key="clusters", cluster_edges=EDGES3, time_key="constvelo_time")
+    assert r.status == "ok"
+
+
 def test_constvelo_builds_ms_with_the_given_graph(rng):
     pytest.importorskip("scvelo")
     a = _counts(rng)

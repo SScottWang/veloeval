@@ -22,6 +22,7 @@ def constvelo(
     n_pcs: int = 30,
     n_neighbors: int = 30,
     vkey: str = "velocity",
+    time_key: str | None = "constvelo_time",
 ) -> np.ndarray:
     r"""Give every cell the same unit velocity, from cluster *start* to *end*.
 
@@ -35,6 +36,18 @@ def constvelo(
     (float32), marks every gene in ``var['{vkey}_genes']`` so scVelo's
     velocity graph uses them all, declares gene space and records the inputs
     in ``uns['veloeval']['constvelo']``.
+
+    It also writes the field's own time, ``obs[time_key]``.  Under
+    :math:`dx/dt = c` a cell at :math:`x_i` has travelled
+
+    .. math::
+
+        t_i = \langle x_i, c \rangle - \min_j \langle x_j, c \rangle
+
+    along *c* -- exact for a constant field, with no root, end or parameter
+    to choose, so it stands beside a method's own time (``latent_time``)
+    in :func:`~veloeval.metrics.cto` and :func:`~veloeval.metrics.tsc` the
+    way the velocity stands beside a method's in the direction metrics.
 
     Compute *c* once, on the reference, and give the same matrix to every
     configuration being compared.  Recomputing it from each configuration's
@@ -58,6 +71,10 @@ def constvelo(
         n_pcs)`` and ``scvelo.pp.moments``, replacing ``obsm['X_pca']`` and the
         neighbour graph.
     vkey : str, default: ``"velocity"``
+    time_key : str or None, default: ``"constvelo_time"``
+        Where the time is written; ``None`` skips it.  Not prefixed with
+        *vkey*, so :func:`~veloeval.prepare` keeps it as the method's own
+        time.
 
     Returns
     -------
@@ -104,6 +121,9 @@ def constvelo(
     adata.layers[vkey] = np.tile(c.astype(np.float32), (adata.n_obs, 1))
     adata.var[f"{vkey}_genes"] = True
     set_velocity_space(adata, "gene")
+    if time_key is not None:
+        t = np.asarray(X @ c, dtype=np.float64).ravel()
+        adata.obs[time_key] = t - t.min()
     record = {
         "start": start,
         "end": end,
@@ -111,6 +131,7 @@ def constvelo(
         "xkey": xkey,
         "n_genes": int(adata.n_vars),
         "raw_norm": float(norm),
+        "time_key": time_key,
     }
     if built:
         record.update(n_pcs=n_pcs, n_neighbors=n_neighbors)
