@@ -51,6 +51,12 @@ how much order one straight line gives.
 M.cto(m, label_key="clusters", cluster_edges=edges, time_key="constvelo_time")
 ```
 
+On pancreas, with the same direction and layouts as above, next to scVelo's
+dynamical latent time; each time is coloured by rank, the order the time
+metrics score:
+
+![ConstVelo time on pancreas](../_static/constvelo_time_pancreas.png)
+
 scVelo's velocity pseudotime is not this time: it is a diffusion on the kNN
 graph, with the velocity only choosing the root, so it orders cells well
 whatever the velocity. On pancreas (7 edges, scvelo 0.3.4):
@@ -67,12 +73,12 @@ The pseudotime of a constant field beats scVelo's own latent time, and pure
 noise orders the cells almost perfectly, backwards from a misplaced root. The
 straight line falls 0.03 short of the latent time, nearly all of it on
 Ductal to Ngn3 low EP (0.54): in `Ms`, not log-transformed, the early cells sit
-close together and the hormone genes dominate *c*. Drawn as ranks, the two
-times are hard to tell apart along the trajectory:
+close together and the hormone genes dominate *c*. Drawn in the PCA of `Ms`,
+where the time is computed, each cell's time is how far along *c* it lies:
 
-![ConstVelo time on pancreas](../_static/constvelo_time_pancreas.png)
+![ConstVelo time as a distance along c](../_static/constvelo_time_projection.png)
 
-The figure comes from `docs/_scripts/constvelo_time_pancreas.py`.
+Both figures come from `docs/_scripts/constvelo_time_pancreas.py`.
 
 ```{eval-rst}
 .. autofunction:: veloeval.constvelo
